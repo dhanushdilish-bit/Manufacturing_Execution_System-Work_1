@@ -113,6 +113,8 @@ export function createSchema(db) {
       supplier TEXT NOT NULL,
       lot_number TEXT NOT NULL,
       quantity REAL NOT NULL CHECK (quantity > 0),
+      accepted_qty REAL,
+      rejected_qty REAL,
       quantity_unit_id INTEGER REFERENCES units(id),
       po_number TEXT,
       po_date TEXT,

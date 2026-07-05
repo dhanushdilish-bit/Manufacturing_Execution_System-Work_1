@@ -186,8 +186,12 @@ const receiptColumns = [
   }),
   receiptHelper.accessor('supplier', { header: 'Supplier' }),
   receiptHelper.accessor('quantity', {
-    header: 'Qty',
-    cell: (info) => <>{fmtQty(Number(info.getValue()))} {info.row.original.unit_code}</>,
+    header: 'Qty (Avail / Total)',
+    cell: (info) => (
+      <>
+        {info.row.original.available_qty != null ? fmtQty(Number(info.row.original.available_qty)) : fmtQty(Number(info.getValue()))} / {fmtQty(Number(info.getValue()))} {info.row.original.unit_code}
+      </>
+    ),
   }),
   receiptHelper.accessor('status', {
     header: 'Status',
@@ -406,6 +410,11 @@ function App() {
   if (currentHash.startsWith('#/feedback/')) {
     const dispatchId = currentHash.split('/')[2]
     return <CustomerFeedback dispatchId={Number(dispatchId)} />
+  }
+
+  if (currentHash.startsWith('#/public-trace/')) {
+    const batchCode = decodeURIComponent(currentHash.split('/')[2] || '')
+    return <PublicTraceability batchCode={batchCode} />
   }
 
   if (!user) {
@@ -701,6 +710,7 @@ function RmStore({
   const pendingQc2 = receipts.filter((receipt) => receipt.status === 'PENDING_QC2')
   const [qcModes, setQcModes] = useState<Record<number, 'detailed' | 'simple'>>({})
   const [qcRemarks, setQcRemarks] = useState<Record<number, string>>({})
+  const [qcQuantities, setQcQuantities] = useState<Record<number, { accepted: number, rejected: number }>>({})
   const [qaRemarks, setQaRemarks] = useState<Record<number, string>>({})
   const [qc2Notes, setQc2Notes] = useState<Record<number, string>>({})
 
@@ -854,6 +864,36 @@ function RmStore({
                   onChange={(parameterId, patch) => updateDraft(receipt.id, parameterId, patch)}
                 />
                 <div style={{ marginTop: '1rem', marginBottom: '1rem' }}>
+                  <div className="grid-two" style={{ gap: '1rem', marginBottom: '0.5rem' }}>
+                    <label>
+                      Good / Accepted Qty
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.001"
+                        value={qcQuantities[receipt.id]?.accepted ?? receipt.quantity}
+                        onChange={(e) => {
+                          const accepted = Number(e.target.value)
+                          const rejected = Math.max(0, receipt.quantity - accepted)
+                          setQcQuantities({ ...qcQuantities, [receipt.id]: { accepted, rejected } })
+                        }}
+                      />
+                    </label>
+                    <label>
+                      Damaged / Rejected Qty
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.001"
+                        value={qcQuantities[receipt.id]?.rejected ?? 0}
+                        onChange={(e) => {
+                          const rejected = Number(e.target.value)
+                          const accepted = Math.max(0, receipt.quantity - rejected)
+                          setQcQuantities({ ...qcQuantities, [receipt.id]: { accepted, rejected } })
+                        }}
+                      />
+                    </label>
+                  </div>
                   <label>
                     Remarks
                     <input
@@ -866,34 +906,46 @@ function RmStore({
                 <div className="button-row">
                   <button
                     type="button"
-                    onClick={() =>
+                    onClick={() => {
+                      const accepted = qcQuantities[receipt.id]?.accepted ?? receipt.quantity
+                      const rejected = qcQuantities[receipt.id]?.rejected ?? 0
+                      const isRejected = accepted === 0
+                      
                       submitAction(
                         postJson(`/api/rm-receipts/${receipt.id}/qc`, {
-                          passed: true,
+                          passed: !isRejected,
+                          disposition: isRejected ? (mode === 'detailed' ? 'HOLD' : 'REJECTED') : undefined,
                           qc_remarks: qcRemarks[receipt.id],
+                          accepted_qty: accepted,
+                          rejected_qty: rejected,
                           results: getResults(visibleParameters, drafts[receipt.id]),
                         }),
-                        'RM lot approved',
+                        isRejected ? 'RM lot held/rejected' : 'RM lot approved',
                       )
-                    }
+                    }}
                   >
                     <CheckCircle2 size={16} />
-                    Pass
+                    Submit QC
                   </button>
                   {mode === 'detailed' && (
                     <button
                       type="button"
-                      onClick={() =>
+                      onClick={() => {
+                        const accepted = qcQuantities[receipt.id]?.accepted ?? receipt.quantity
+                        const rejected = qcQuantities[receipt.id]?.rejected ?? 0
+                        
                         submitAction(
                           postJson(`/api/rm-receipts/${receipt.id}/qc`, {
                             passed: false,
                             disposition: 'HOLD',
                             qc_remarks: qcRemarks[receipt.id],
+                            accepted_qty: accepted,
+                            rejected_qty: rejected,
                             results: getResults(visibleParameters, drafts[receipt.id]),
                           }),
                           'RM lot held',
                         )
-                      }
+                      }}
                     >
                       <ShieldCheck size={16} />
                       Hold
@@ -2084,7 +2136,7 @@ function DayStore({
                 <StatusBadge status={request.status} />
               </div>
               <small>Request #{request.id} • Due: {request.due_date || 'N/A'}</small>
-              <IssueList request={request} issues={rmIssues} />
+              <IssueList request={request} issues={rmIssues} showStaged />
             </article>
           ))}
         </div>
@@ -2257,7 +2309,20 @@ function Traceability({
       {trace && (
         <>
           <section className="panel">
-            <PanelTitle icon={PackageCheck} title={trace.batch.batch_code} />
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+              <PanelTitle icon={PackageCheck} title={trace.batch.batch_code} />
+              <button 
+                type="button" 
+                onClick={() => {
+                  const url = `${window.location.origin}${window.location.pathname}#/public-trace/${encodeURIComponent(trace.batch.batch_code)}`
+                  navigator.clipboard.writeText(url)
+                  alert('Customer link copied to clipboard!')
+                }}
+                style={{ background: 'var(--primary)', color: 'white', border: 'none', padding: '0.4rem 0.8rem', borderRadius: '4px', cursor: 'pointer', fontSize: '0.85em', display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+              >
+                Copy Customer Link
+              </button>
+            </div>
             <div className="detail-grid">
               <Detail label="Product" value={`${trace.batch.product_code} - ${trace.batch.product_name}`} />
               <Detail label="Status" value={<StatusBadge status={trace.batch.status} />} />
@@ -3157,13 +3222,13 @@ function QcParameterInputs({
   )
 }
 
-function IssueList({ request, issues }: { request: ProductionRequest; issues: WorkflowData['rmIssues'] }) {
+function IssueList({ request, issues, showStaged }: { request: ProductionRequest; issues: WorkflowData['rmIssues']; showStaged?: boolean }) {
   const matching = issues.filter((issue) => issue.request_id === request.id)
   return (
     <ul className="compact-list">
       {matching.map((issue) => (
         <li key={issue.id}>
-          {issue.material_code}: {fmtQty(issue.requested_qty)} {issue.unit_code}
+          {issue.material_code}: {showStaged && issue.staged_qty != null ? fmtQty(Number(issue.staged_qty)) : fmtQty(issue.requested_qty)} {issue.unit_code}
         </li>
       ))}
     </ul>
@@ -3360,6 +3425,100 @@ function CustomerFeedback({ dispatchId }: { dispatchId: number }) {
           </form>
         )}
       </div>
+    </div>
+  )
+}
+
+function PublicTraceability({ batchCode }: { batchCode: string }) {
+  const [trace, setTrace] = useState<TraceabilityResult | null>(null)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    fetch(`/api/public/traceability/${encodeURIComponent(batchCode)}`)
+      .then(res => res.json().then(data => ({ status: res.status, data })))
+      .then(({ status, data }) => {
+        if (status >= 400) {
+          setError(data.error || 'Failed to load traceability data')
+        } else {
+          setTrace(data)
+        }
+      })
+      .catch(err => setError(err.message))
+  }, [batchCode])
+
+  return (
+    <div style={{ maxWidth: '800px', margin: '2rem auto', padding: '0 1rem', fontFamily: 'sans-serif' }}>
+      <header style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '2rem', color: 'var(--primary)' }}>
+        <Factory size={32} />
+        <h1 style={{ margin: 0, fontSize: '1.5rem' }}>Customer Portal - Batch Traceability</h1>
+      </header>
+
+      {error && <div className="notice-bar error" style={{ padding: '1rem', borderRadius: '8px', marginBottom: '1rem' }}>{error}</div>}
+
+      {trace && (
+        <div className="stack" style={{ gap: '1.5rem' }}>
+          <section className="panel" style={{ boxShadow: '0 4px 12px rgba(0,0,0,0.05)', border: '1px solid var(--border)' }}>
+            <PanelTitle icon={PackageCheck} title={trace.batch.batch_code} />
+            <div className="detail-grid" style={{ gap: '1rem' }}>
+              <Detail label="Product" value={`${trace.batch.product_code} - ${trace.batch.product_name}`} />
+              <Detail label="Produced Quantity" value={`${fmtQty(trace.batch.quantity)} units`} />
+              <Detail label="Shift" value={trace.batch.shift} />
+            </div>
+          </section>
+
+          <section className="panel" style={{ boxShadow: '0 4px 12px rgba(0,0,0,0.05)', border: '1px solid var(--border)' }}>
+            <PanelTitle icon={Boxes} title="Raw Material Genealogy" />
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.9em' }}>
+                <thead>
+                  <tr style={{ borderBottom: '2px solid var(--border)', textAlign: 'left' }}>
+                    <th style={{ padding: '0.75rem' }}>Material</th>
+                    <th style={{ padding: '0.75rem' }}>Lot</th>
+                    <th style={{ padding: '0.75rem' }}>Quantity Used</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {trace.rawMaterials.map((row, index) => (
+                    <tr key={index} style={{ borderBottom: '1px solid var(--border)' }}>
+                      <td style={{ padding: '0.75rem' }}>{row.material_code} - {row.material_name}</td>
+                      <td style={{ padding: '0.75rem' }}>{row.lot_number}</td>
+                      <td style={{ padding: '0.75rem' }}>{fmtQty(row.actual_qty)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <section className="panel" style={{ boxShadow: '0 4px 12px rgba(0,0,0,0.05)', border: '1px solid var(--border)' }}>
+            <PanelTitle icon={ClipboardCheck} title="Quality Control Results" />
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.9em' }}>
+                <thead>
+                  <tr style={{ borderBottom: '2px solid var(--border)', textAlign: 'left' }}>
+                    <th style={{ padding: '0.75rem' }}>Stage</th>
+                    <th style={{ padding: '0.75rem' }}>Parameter</th>
+                    <th style={{ padding: '0.75rem' }}>Value</th>
+                    <th style={{ padding: '0.75rem' }}>Result</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {trace.fgQc.map((row, index) => (
+                    <tr key={index} style={{ borderBottom: '1px solid var(--border)' }}>
+                      <td style={{ padding: '0.75rem' }}>{row.stage || 'QC'}</td>
+                      <td style={{ padding: '0.75rem' }}>{row.label || 'Manual check'}</td>
+                      <td style={{ padding: '0.75rem' }}>{row.value || '-'}</td>
+                      <td style={{ padding: '0.75rem', color: Number(row.passed) ? 'var(--success)' : 'var(--danger)', fontWeight: 'bold' }}>
+                        {Number(row.passed) ? 'Pass' : 'Fail'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+      )}
     </div>
   )
 }

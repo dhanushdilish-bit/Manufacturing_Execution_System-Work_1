@@ -107,6 +107,9 @@ export type RmReceipt = {
   supplier: string
   lot_number: string
   quantity: number
+  accepted_qty: number | null
+  rejected_qty: number | null
+  available_qty?: number
   quantity_unit_id?: number | null
   quantity_unit_code?: string | null
   po_number?: string | null
@@ -183,6 +186,7 @@ export type RmIssue = {
   unit_code: string
   requested_qty: number
   approved_qty: number
+  staged_qty?: number
   status: string
 }
 

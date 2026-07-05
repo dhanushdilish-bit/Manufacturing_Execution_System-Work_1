@@ -214,7 +214,8 @@ export function createApp(db = initDatabase()) {
         case 'rm-receipts':
           baseSql = `
             SELECT rr.*, rm.code AS material_code, rm.name AS material_name, u.code AS unit_code,
-                   qc.name AS qc_by_name, qa.name AS qa_by_name, creator.name AS created_by_name
+                   qc.name AS qc_by_name, qa.name AS qa_by_name, creator.name AS created_by_name,
+                   (COALESCE(rr.accepted_qty, rr.quantity) - COALESCE((SELECT SUM(quantity) FROM rm_issue_allocations WHERE receipt_id = rr.id), 0)) AS available_qty
             FROM rm_receipts rr
             JOIN raw_materials rm ON rm.id = rr.material_id
             JOIN units u ON u.id = rm.unit_id
@@ -322,6 +323,36 @@ export function createApp(db = initDatabase()) {
       console.error(err)
       res.status(500).json({ error: err.message })
     }
+  })
+
+  app.get('/api/public/traceability/:batchCode', (req, res) => {
+    const result = getTraceability(db, req.params.batchCode)
+    
+    // Sanitize data for public customer view
+    result.batch.team_members = undefined
+    result.batch.rm_approved_by_name = undefined
+    result.batch.fg_qc_by_name = undefined
+    result.batch.fg_qa_by_name = undefined
+    result.batch.remarks = undefined
+    result.batch.qc_remarks = undefined
+    result.batch.qa_remarks = undefined
+    result.batch.source_team = undefined
+
+    result.rawMaterials = result.rawMaterials.map(rm => ({
+      ...rm,
+      supplier: undefined,
+      rm_qc_by_name: undefined,
+      remarks: undefined,
+      qc_remarks: undefined,
+      qa_remarks: undefined
+    }))
+
+    result.fgQc = result.fgQc.map(qc => ({
+      ...qc,
+      checked_by_name: undefined
+    }))
+
+    res.json(result)
   })
 
   app.get('/api/traceability/:batchCode', requireUser(db), (req, res) => {
@@ -451,7 +482,13 @@ function getWorkflow(db) {
       ORDER BY pr.id DESC
     `).all(),
     rmIssues: db.prepare(`
-      SELECT ri.*, rm.code AS material_code, rm.name AS material_name, u.code AS unit_code
+      SELECT ri.*, rm.code AS material_code, rm.name AS material_name, u.code AS unit_code,
+             (ri.approved_qty - COALESCE((
+               SELECT SUM(pc.actual_qty) 
+               FROM production_consumption pc 
+               JOIN rm_issue_allocations ria ON ria.id = pc.allocation_id 
+               WHERE ria.issue_id = ri.id
+             ), 0)) AS staged_qty
       FROM rm_issues ri
       JOIN raw_materials rm ON rm.id = ri.material_id
       JOIN units u ON u.id = rm.unit_id
@@ -826,11 +863,18 @@ function qcRmReceipt(db, receiptId, body, userId) {
     const resultsPassed = (body.results ?? []).every((result) => result.passed !== false)
     const passed = Boolean(body.passed) && resultsPassed
     const failedStatus = body.disposition === 'HOLD' ? 'HOLD' : 'PENDING_QC2'
+    
+    const acceptedQty = Number(body.accepted_qty ?? receipt.quantity)
+    const rejectedQty = Number(body.rejected_qty ?? 0)
+    if (Math.abs(acceptedQty + rejectedQty - receipt.quantity) > 0.0001) {
+      throw httpError(400, 'Accepted and rejected quantities must sum to the total receipt quantity')
+    }
+
     db.prepare(`
       UPDATE rm_receipts
-      SET status = ?, qc_by = ?, qc_at = ?, qc_remarks = ?
+      SET status = ?, qc_by = ?, qc_at = ?, qc_remarks = ?, accepted_qty = ?, rejected_qty = ?
       WHERE id = ?
-    `).run(passed ? 'PENDING_QA' : failedStatus, userId, nowIso(), body.qc_remarks || null, receiptId)
+    `).run(passed ? 'PENDING_QA' : failedStatus, userId, nowIso(), body.qc_remarks || null, acceptedQty, rejectedQty, receiptId)
     return getRmReceipt(db, receiptId)
   })
 }
@@ -1023,7 +1067,7 @@ function approveProductionRequest(db, requestId, body, userId) {
 
 function allocateIssue(db, issue) {
   const availableLots = db.prepare(`
-    SELECT rr.id, rr.quantity - COALESCE(SUM(ria.quantity), 0) AS available_qty
+    SELECT rr.id, COALESCE(rr.accepted_qty, rr.quantity) - COALESCE(SUM(ria.quantity), 0) AS available_qty
     FROM rm_receipts rr
     LEFT JOIN rm_issue_allocations ria ON ria.receipt_id = rr.id
     WHERE rr.material_id = ? AND rr.status = 'APPROVED'
