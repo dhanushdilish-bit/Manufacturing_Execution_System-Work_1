@@ -1,3 +1,9 @@
+export type Role = {
+  code: string
+  name: string
+  permissions: string // JSON string array of tabs/permissions
+}
+
 export type User = {
   id: number
   username: string
@@ -87,6 +93,7 @@ export type QcParameter = {
 }
 
 export type BootstrapData = {
+  roles: Role[]
   users: User[]
   units: Unit[]
   rawMaterials: RawMaterial[]

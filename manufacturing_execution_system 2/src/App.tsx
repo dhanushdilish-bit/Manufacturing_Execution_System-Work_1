@@ -40,6 +40,7 @@ import type {
   TraceabilityResult,
   User,
   WorkflowData,
+  Role,
 } from './types'
 import { createColumnHelper } from '@tanstack/react-table'
 import { AjaxTable } from './components/AjaxTable'
@@ -50,6 +51,7 @@ type Notice = { type: 'success' | 'error'; message: string } | null
 type QcDraft = Record<number, { value: string; passed: boolean }>
 
 const emptyBootstrap: BootstrapData = {
+  roles: [],
   users: [],
   units: [],
   rawMaterials: [],
@@ -92,31 +94,16 @@ const tabs: Array<{
 }> = [
   { key: 'dashboard', label: 'Dashboard', icon: Activity, roles: ['all'] },
   { key: 'rm', label: 'RM Store', icon: Boxes, roles: ['admin', 'manager', 'rm_store', 'qc', 'qa'] },
-  { key: 'production', label: 'Production', icon: Factory, roles: ['admin', 'manager', 'production', 'rm_store'] },
+  { key: 'production', label: 'Production', icon: Factory, roles: ['admin', 'manager', 'production', 'rm_store', 'production_head'] },
   { key: 'qc_dashboard', label: 'QC Dashboard', icon: FlaskConical, roles: ['admin', 'manager', 'qc'] },
   { key: 'qa_dashboard', label: 'QA Dashboard', icon: ClipboardCheck, roles: ['admin', 'manager', 'qa'] },
   { key: 'qc', label: 'Day Store', icon: Warehouse, roles: ['admin', 'manager', 'qc', 'qa', 'production'] },
   { key: 'fg', label: 'FG & Dispatch', icon: Truck, roles: ['admin', 'manager', 'fg_store', 'dispatch'] },
   { key: 'traceability', label: 'Traceability', icon: Search, roles: ['all'] },
-  { key: 'users', label: 'Admin Users', icon: ShieldCheck, roles: ['admin'] },
+  { key: 'users', label: 'Admin / Security', icon: ShieldCheck, roles: ['admin'] },
   { key: 'master', label: 'Master Data', icon: Settings, roles: ['admin', 'manager'] },
 ]
 
-const roleLabel: Record<string, string> = {
-  admin: 'Admin',
-  manager: 'Manager',
-  rm_store: 'RM Store Manager',
-  production: 'Production Team',
-  qc: 'QC Supervisor',
-  qa: 'QA Supervisor',
-  fg_store: 'FG Store Manager',
-  dispatch: 'Dispatch / Sales / Office',
-}
-
-const roleOptions = ['admin', 'manager', 'rm_store', 'production', 'qc', 'qa', 'fg_store', 'dispatch'].map((role) => [
-  role,
-  roleLabel[role],
-])
 
 const dispatchHelper = createColumnHelper<Dispatch>()
 const dispatchColumns = [
@@ -296,8 +283,19 @@ function App() {
   const [editingEmployeeCode, setEditingEmployeeCode] = useState<string | null>(null)
 
   const visibleTabs = useMemo(
-    () => tabs.filter((tab) => tab.roles.includes('all') || (user && tab.roles.includes(user.role))),
-    [user],
+    () => tabs.filter((tab) => {
+      if (tab.roles.includes('all')) return true
+      if (!user || !bootstrap?.roles) return false
+      const roleDef = bootstrap.roles.find((r) => r.code === user.role)
+      if (!roleDef) return false
+      try {
+        const perms = JSON.parse(roleDef.permissions)
+        return perms.includes(tab.key)
+      } catch {
+        return false
+      }
+    }),
+    [user, bootstrap],
   )
 
   useEffect(() => {
@@ -444,7 +442,7 @@ function App() {
             Sign in
           </button>
           <div className="seed-users">
-            {['admin', 'rm.manager', 'production', 'qc.supervisor', 'qa.supervisor', 'fg.manager', 'dispatch'].map((name) => (
+            {['admin', 'rm.manager', 'production', 'production.head', 'qc.supervisor', 'qa.supervisor', 'fg.manager', 'dispatch'].map((name) => (
               <button key={name} type="button" onClick={() => setLogin({ username: name, password: 'demo123' })}>
                 {name}
               </button>
@@ -463,7 +461,7 @@ function App() {
           <Factory size={28} />
           <div>
             <strong>MES Control</strong>
-            <span>{roleLabel[user.role] ?? user.role}</span>
+            <span>{bootstrap?.roles?.find(r => r.code === user.role)?.name ?? user.role}</span>
           </div>
         </div>
         <nav>
@@ -579,8 +577,13 @@ function App() {
         )}
         {activeTab === 'users' && (
           <div className="stack">
+            <RoleManagement
+              roles={bootstrap.roles}
+              submitAction={submitAction}
+            />
             <UserManagement
               users={bootstrap.users}
+              roles={bootstrap.roles}
               currentUser={user}
               form={userForm}
               setForm={setUserForm}
@@ -1834,8 +1837,9 @@ function Production({
         </form>
       </section>
 
-      <section className="panel">
-        <PanelTitle icon={ShieldCheck} title="RM Approval Queue" />
+      {userRole !== 'production_head' && (
+        <section className="panel">
+          <PanelTitle icon={ShieldCheck} title="RM Approval Queue" />
         <div className="queue-list">
           {pendingApproval.length === 0 && <div className="empty">No RM approvals pending</div>}
           {pendingApproval.map((request) => (
@@ -1895,10 +1899,12 @@ function Production({
             </article>
           ))}
         </div>
-      </section>
+        </section>
+      )}
 
-      <section className="panel">
-        <PanelTitle icon={Factory} title="Production Run" />
+      {userRole !== 'production_head' && (
+        <section className="panel">
+          <PanelTitle icon={Factory} title="Production Run" />
         <form
           className="stack"
           onSubmit={async (event) => {
@@ -2117,6 +2123,7 @@ function Production({
           </button>
         </form>
       </section>
+      )}
 
       <section className="panel wide">
         <PanelTitle icon={ClipboardCheck} title="Production History" />
@@ -2481,6 +2488,7 @@ function Traceability({
 
 function UserManagement({
   users,
+  roles,
   currentUser,
   form,
   setForm,
@@ -2489,6 +2497,7 @@ function UserManagement({
   submitAction,
 }: {
   users: User[]
+  roles: Role[]
   currentUser: User
   form: Record<string, string>
   setForm: (value: Record<string, string>) => void
@@ -2558,7 +2567,7 @@ function UserManagement({
             label="Role"
             value={form.role}
             onChange={(value) => setForm({ ...form, role: value })}
-            options={roleOptions}
+            options={roles.map(r => [r.code, r.name])}
             disabled={editingSelf}
           />
           <SelectInput
@@ -2604,7 +2613,7 @@ function UserManagement({
                   <strong>{account.name}</strong>
                   <span className="table-muted">{account.username}</span>
                 </td>
-                <td data-label="Role">{roleLabel[account.role] ?? account.role}</td>
+                <td data-label="Role">{roles.find(r => r.code === account.role)?.name ?? account.role}</td>
                 <td data-label="Status">
                   <StatusBadge status={Number(account.active) ? 'ACTIVE' : 'INACTIVE'} />
                 </td>
@@ -3149,17 +3158,19 @@ function TextInput({
   onChange,
   type = 'text',
   required = label !== 'Min' && label !== 'Max',
+  disabled = false,
 }: {
   label: string
   value: string
   onChange: (value: string) => void
   type?: string
   required?: boolean
+  disabled?: boolean
 }) {
   return (
     <label>
       {label}
-      <input type={type} value={value} onChange={(event) => onChange(event.target.value)} required={required} />
+      <input type={type} value={value} onChange={(event) => onChange(event.target.value)} required={required} disabled={disabled} />
     </label>
   )
 }
@@ -3610,6 +3621,145 @@ function PrintTicket({ request, issues }: { request: ProductionRequest; issues: 
           <div className="sig-line">Issued By</div>
         </div>
       </div>
+    </div>
+  )
+}
+
+function RoleManagement({
+  roles,
+  submitAction,
+}: {
+  roles: Role[]
+  submitAction: <T>(action: Promise<T>, message: string) => Promise<boolean>
+}) {
+  const [form, setForm] = useState({ code: '', name: '', permissions: [] as string[] })
+  const [editingCode, setEditingCode] = useState<string | null>(null)
+
+  const isEditing = editingCode !== null
+
+  function resetForm() {
+    setEditingCode(null)
+    setForm({ code: '', name: '', permissions: [] })
+  }
+
+  function editRole(role: Role) {
+    setEditingCode(role.code)
+    try {
+      setForm({ code: role.code, name: role.name, permissions: JSON.parse(role.permissions) })
+    } catch {
+      setForm({ code: role.code, name: role.name, permissions: [] })
+    }
+  }
+
+  async function saveRole(event: FormEvent) {
+    event.preventDefault()
+    const payload = {
+      code: form.code,
+      name: form.name,
+      permissions: JSON.stringify(form.permissions)
+    }
+    const saved = await submitAction(
+      isEditing ? putJson(`/api/admin/roles/${editingCode}`, payload) : postJson('/api/admin/roles', payload),
+      isEditing ? 'Role updated' : 'Role created',
+    )
+    if (saved) resetForm()
+  }
+
+  async function deleteRole(role: Role) {
+    if (role.code === 'admin') return alert('Cannot delete the built-in admin role')
+    const confirmed = window.confirm(`Delete role ${role.name}? This will fail if users are still assigned to it.`)
+    if (!confirmed) return
+
+    const deleted = await submitAction(api(`/api/admin/roles/${role.code}`, { method: 'DELETE' }), 'Role deleted')
+    if (deleted && editingCode === role.code) resetForm()
+  }
+
+  const availablePermissions = tabs.map(t => ({ key: t.key, label: t.label }))
+
+  return (
+    <div className="grid-two">
+      <section className="panel">
+        <PanelTitle icon={ShieldCheck} title={isEditing ? 'Edit Role' : 'Create Role'} />
+        <form className="form-grid" onSubmit={saveRole}>
+          <TextInput label="Role Code" value={form.code} onChange={(value) => setForm({ ...form, code: value })} required={!isEditing} disabled={isEditing} />
+          <TextInput label="Role Name" value={form.name} onChange={(value) => setForm({ ...form, name: value })} required />
+          <div className="span-two">
+            <strong>Permissions (Tabs)</strong>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginTop: '0.5rem' }}>
+              {availablePermissions.map(p => (
+                <label key={p.key} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 'normal' }}>
+                  <input
+                    type="checkbox"
+                    checked={form.permissions.includes(p.key)}
+                    onChange={(e) => {
+                      if (e.target.checked) {
+                        setForm({ ...form, permissions: [...form.permissions, p.key] })
+                      } else {
+                        setForm({ ...form, permissions: form.permissions.filter(k => k !== p.key) })
+                      }
+                    }}
+                  />
+                  {p.label}
+                </label>
+              ))}
+            </div>
+          </div>
+          <div className="button-row span-two">
+            <button className="primary-button" type="submit">
+              {isEditing ? 'Update Role' : 'Create Role'}
+            </button>
+            {isEditing && (
+              <button type="button" onClick={resetForm}>
+                <XCircle size={16} />
+                Cancel
+              </button>
+            )}
+          </div>
+        </form>
+      </section>
+
+      <section className="panel wide">
+        <PanelTitle icon={ShieldCheck} title="Role Definitions" />
+        <table className="user-table">
+          <thead>
+            <tr>
+              <th>Code</th>
+              <th>Name</th>
+              <th>Permissions</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {roles.map((role) => (
+              <tr key={role.code}>
+                <td data-label="Code"><strong>{role.code}</strong></td>
+                <td data-label="Name">{role.name}</td>
+                <td data-label="Permissions" style={{ fontSize: '0.85em', color: 'var(--text-muted)' }}>
+                  {(() => {
+                    try {
+                      return JSON.parse(role.permissions).join(', ')
+                    } catch {
+                      return role.permissions
+                    }
+                  })()}
+                </td>
+                <td data-label="Actions">
+                  <div className="table-actions">
+                    <button onClick={() => editRole(role)} title="Edit">
+                      <Settings size={16} />
+                    </button>
+                    {role.code !== 'admin' && (
+                      <button className="danger" onClick={() => deleteRole(role)} title="Delete">
+                        <XCircle size={16} />
+                      </button>
+                    )}
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </section>
     </div>
   )
 }

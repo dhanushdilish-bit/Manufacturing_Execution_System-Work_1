@@ -62,6 +62,26 @@ export function createApp(db = initDatabase()) {
     res.json({ deleted: true })
   })
 
+  app.get('/api/admin/roles', requireUser(db), requireAdmin(), (_req, res) => {
+    res.json({ rows: listRoles(db) })
+  })
+
+  app.post('/api/admin/roles', requireUser(db), requireAdmin(), (req, res) => {
+    const role = createRole(db, req.body ?? {})
+    res.status(201).json(role)
+  })
+
+  app.put('/api/admin/roles/:code', requireUser(db), requireAdmin(), (req, res) => {
+    const role = updateRole(db, req.params.code, req.body ?? {})
+    res.json(role)
+  })
+
+  app.delete('/api/admin/roles/:code', requireUser(db), requireAdmin(), (req, res) => {
+    deleteRole(db, req.params.code)
+    res.json({ deleted: true })
+  })
+
+
   app.get('/api/workflow', requireUser(db), (req, res) => {
     res.json(getWorkflow(db))
   })
@@ -426,6 +446,7 @@ function inTransaction(db, work) {
 
 function getBootstrap(db, user) {
   return {
+    roles: user.role === 'admin' ? listRoles(db) : [],
     users: user.role === 'admin' ? listUsers(db) : [],
     units: listResource(db, 'units'),
     rawMaterials: listResource(db, 'raw-materials'),
@@ -672,6 +693,44 @@ function normalizeValue(value) {
   if (value === '') return null
   if (typeof value === 'boolean') return value ? 1 : 0
   return value ?? null
+}
+
+function listRoles(db) {
+  return db.prepare("SELECT * FROM roles ORDER BY name").all()
+}
+
+function createRole(db, body) {
+  if (!body.code || !body.name) throw httpError(400, 'Code and name are required')
+  try {
+    db.prepare('INSERT INTO roles (code, name, permissions) VALUES (?, ?, ?)').run(
+      body.code,
+      body.name,
+      body.permissions || '[]'
+    )
+    return db.prepare('SELECT * FROM roles WHERE code = ?').get(body.code)
+  } catch (e) {
+    if (e.code === 'SQLITE_CONSTRAINT_PRIMARYKEY') throw httpError(400, 'Role code already exists')
+    throw e
+  }
+}
+
+function updateRole(db, code, body) {
+  if (!body.name) throw httpError(400, 'Name is required')
+  const info = db.prepare('UPDATE roles SET name = ?, permissions = ? WHERE code = ?').run(
+    body.name,
+    body.permissions || '[]',
+    code
+  )
+  if (info.changes === 0) throw httpError(404, 'Role not found')
+  return db.prepare('SELECT * FROM roles WHERE code = ?').get(code)
+}
+
+function deleteRole(db, code) {
+  if (db.prepare('SELECT 1 FROM users WHERE role = ? AND deleted_at IS NULL').get(code)) {
+    throw httpError(400, 'Cannot delete role assigned to active users')
+  }
+  const info = db.prepare('DELETE FROM roles WHERE code = ?').run(code)
+  if (info.changes === 0) throw httpError(404, 'Role not found')
 }
 
 function listUsers(db) {

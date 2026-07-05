@@ -26,6 +26,12 @@ export function createSchema(db) {
       value TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS roles (
+      code TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      permissions TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS users (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       username TEXT NOT NULL UNIQUE,
@@ -453,10 +459,32 @@ function ensureProductionRequestsStatus(db) {
 }
 
 function seedDatabase(db) {
+  const roleRows = [
+    ['admin', 'Admin', JSON.stringify(['dashboard', 'rm', 'production', 'qc_dashboard', 'qa_dashboard', 'qc', 'fg', 'traceability', 'users', 'master'])],
+    ['manager', 'Manager', JSON.stringify(['dashboard', 'rm', 'production', 'qc_dashboard', 'qa_dashboard', 'qc', 'fg', 'traceability', 'master'])],
+    ['rm_store', 'RM Store Manager', JSON.stringify(['dashboard', 'rm', 'production', 'traceability'])],
+    ['production', 'Production Team', JSON.stringify(['dashboard', 'production', 'qc', 'traceability'])],
+    ['production_head', 'Production Head', JSON.stringify(['dashboard', 'production', 'traceability'])],
+    ['qc', 'QC Supervisor', JSON.stringify(['dashboard', 'rm', 'qc_dashboard', 'qc', 'traceability'])],
+    ['qa', 'QA Supervisor', JSON.stringify(['dashboard', 'rm', 'qa_dashboard', 'qc', 'traceability'])],
+    ['fg_store', 'FG Store Manager', JSON.stringify(['dashboard', 'fg', 'traceability'])],
+    ['dispatch', 'Dispatch / Sales / Office', JSON.stringify(['dashboard', 'fg', 'traceability'])],
+  ]
+
+  const insertRole = db.prepare(`
+    INSERT INTO roles (code, name, permissions)
+    VALUES (?, ?, ?)
+    ON CONFLICT(code) DO UPDATE SET
+      name = excluded.name,
+      permissions = excluded.permissions
+  `)
+  for (const row of roleRows) insertRole.run(...row)
+
   const userRows = [
     ['admin', 'demo123', 'Asha Manager', 'admin'],
     ['rm.manager', 'demo123', 'Ravi RM Store', 'rm_store'],
     ['production', 'demo123', 'Meera Production', 'production'],
+    ['production.head', 'demo123', 'Sunil Prod Head', 'production_head'],
     ['qc.supervisor', 'demo123', 'Nikhil QC', 'qc'],
     ['qa.supervisor', 'demo123', 'Vikram QA', 'qa'],
     ['fg.manager', 'demo123', 'Isha FG Store', 'fg_store'],
