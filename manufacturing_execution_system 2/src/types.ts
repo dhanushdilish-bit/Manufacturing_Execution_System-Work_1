@@ -148,6 +148,8 @@ export type ProductionPlan = {
   unit_code: string
   planned_qty: number
   plan_date: string
+  shift?: string | null
+  batch_number?: string | null
   status: string
   remarks?: string | null
   created_by_name?: string

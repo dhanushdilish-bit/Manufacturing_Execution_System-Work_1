@@ -182,8 +182,8 @@ export function createSchema(db) {
       priority TEXT NOT NULL DEFAULT 'NORMAL',
       notes TEXT,
       remarks TEXT,
-      status TEXT NOT NULL DEFAULT 'PENDING_RM_APPROVAL'
-        CHECK (status IN ('PENDING_RM_APPROVAL', 'RM_APPROVED', 'RM_REJECTED', 'IN_PRODUCTION', 'PRODUCED')),
+      status TEXT NOT NULL DEFAULT 'PENDING_QC'
+        CHECK (status IN ('PENDING_QC', 'PENDING_QA', 'QC_REJECTED', 'QA_REJECTED', 'PENDING_RM_APPROVAL', 'RM_APPROVED', 'RM_REJECTED', 'IN_PRODUCTION', 'PRODUCED')),
       created_by INTEGER REFERENCES users(id),
       approved_by INTEGER REFERENCES users(id),
       approved_at TEXT,
@@ -311,6 +311,7 @@ export function createSchema(db) {
   ensureProductionPlanningColumns(db)
   ensureProductionRunLoggingColumns(db)
   ensureQcTemplatesScope(db)
+  ensureProductionRequestsStatus(db)
   ensureNewColumns(db)
   ensureRmReceiptColumns(db)
 
@@ -402,6 +403,48 @@ function ensureQcTemplatesScope(db) {
     db.exec('INSERT INTO qc_templates_new SELECT * FROM qc_templates')
     db.exec('DROP TABLE qc_templates')
     db.exec('ALTER TABLE qc_templates_new RENAME TO qc_templates')
+    db.exec('COMMIT')
+    db.exec('PRAGMA foreign_keys = ON')
+  }
+}
+
+function ensureProductionRequestsStatus(db) {
+  const tableInfo = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='production_requests'").get()
+  if (tableInfo && !tableInfo.sql.includes('PENDING_QC')) {
+    db.exec('PRAGMA foreign_keys = OFF')
+    db.exec('BEGIN')
+    db.exec(`
+      CREATE TABLE production_requests_new (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        plan_id INTEGER REFERENCES production_plans(id) ON DELETE CASCADE,
+        product_id INTEGER NOT NULL REFERENCES products(id),
+        requested_qty REAL NOT NULL CHECK (requested_qty > 0),
+        source_team TEXT NOT NULL,
+        due_date TEXT,
+        priority TEXT NOT NULL DEFAULT 'NORMAL',
+        notes TEXT,
+        remarks TEXT,
+        status TEXT NOT NULL DEFAULT 'PENDING_QC'
+          CHECK (status IN ('PENDING_QC', 'PENDING_QA', 'QC_REJECTED', 'QA_REJECTED', 'PENDING_RM_APPROVAL', 'RM_APPROVED', 'RM_REJECTED', 'IN_PRODUCTION', 'PRODUCED')),
+        created_by INTEGER REFERENCES users(id),
+        approved_by INTEGER REFERENCES users(id),
+        approved_at TEXT,
+        approval_remarks TEXT,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )
+    `)
+    db.exec(`
+      INSERT INTO production_requests_new (
+        id, plan_id, product_id, requested_qty, source_team, due_date, priority, 
+        notes, remarks, status, created_by, approved_by, approved_at, approval_remarks, created_at
+      )
+      SELECT 
+        id, plan_id, product_id, requested_qty, source_team, due_date, priority, 
+        notes, remarks, status, created_by, approved_by, approved_at, approval_remarks, created_at 
+      FROM production_requests
+    `)
+    db.exec('DROP TABLE production_requests')
+    db.exec('ALTER TABLE production_requests_new RENAME TO production_requests')
     db.exec('COMMIT')
     db.exec('PRAGMA foreign_keys = ON')
   }

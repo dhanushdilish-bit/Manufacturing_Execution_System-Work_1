@@ -44,7 +44,7 @@ import { createColumnHelper } from '@tanstack/react-table'
 import { AjaxTable } from './components/AjaxTable'
 import './App.css'
 
-type TabKey = 'dashboard' | 'rm' | 'production' | 'qc' | 'fg' | 'traceability' | 'users' | 'master'
+type TabKey = 'dashboard' | 'rm' | 'production' | 'qc_dashboard' | 'qa_dashboard' | 'qc' | 'fg' | 'traceability' | 'users' | 'master'
 type Notice = { type: 'success' | 'error'; message: string } | null
 type QcDraft = Record<number, { value: string; passed: boolean }>
 
@@ -92,6 +92,8 @@ const tabs: Array<{
   { key: 'dashboard', label: 'Dashboard', icon: Activity, roles: ['all'] },
   { key: 'rm', label: 'RM Store', icon: Boxes, roles: ['admin', 'manager', 'rm_store', 'qc', 'qa'] },
   { key: 'production', label: 'Production', icon: Factory, roles: ['admin', 'manager', 'production', 'rm_store'] },
+  { key: 'qc_dashboard', label: 'QC Dashboard', icon: FlaskConical, roles: ['admin', 'manager', 'qc'] },
+  { key: 'qa_dashboard', label: 'QA Dashboard', icon: ClipboardCheck, roles: ['admin', 'manager', 'qa'] },
   { key: 'qc', label: 'Day Store', icon: Warehouse, roles: ['admin', 'manager', 'qc', 'qa', 'production'] },
   { key: 'fg', label: 'FG & Dispatch', icon: Truck, roles: ['admin', 'manager', 'fg_store', 'dispatch'] },
   { key: 'traceability', label: 'Traceability', icon: Search, roles: ['all'] },
@@ -519,6 +521,20 @@ function App() {
             workflow={workflow}
             submitAction={submitAction}
             userRole={user.role}
+          />
+        )}
+        {activeTab === 'qc_dashboard' && (
+          <QcDashboard
+            workflow={workflow}
+            submitAction={submitAction}
+            rmIssues={workflow.rmIssues}
+          />
+        )}
+        {activeTab === 'qa_dashboard' && (
+          <QaDashboard
+            workflow={workflow}
+            submitAction={submitAction}
+            rmIssues={workflow.rmIssues}
           />
         )}
         {activeTab === 'qc' && (
@@ -1030,6 +1046,144 @@ function RmStore({
   )
 }
 
+function QcDashboard({
+  workflow,
+  submitAction,
+  rmIssues,
+}: {
+  workflow: WorkflowData
+  submitAction: <T>(action: Promise<T>, message: string) => Promise<boolean>
+  rmIssues: WorkflowData['rmIssues']
+}) {
+  const pendingQc = workflow.productionRequests.filter((req) => req.status === 'PENDING_QC')
+  const [remarks, setRemarks] = useState<Record<number, string>>({})
+
+  return (
+    <div className="stack">
+      <section className="panel wide">
+        <PanelTitle icon={FlaskConical} title="QC Dashboard - Daily Material Requests" />
+        <div className="queue-list">
+          {pendingQc.length === 0 && <div className="empty">No material requests pending QC</div>}
+          {pendingQc.map((request) => (
+            <article className="queue-item" key={request.id}>
+              <div className="queue-heading">
+                <strong>{request.product_code} / {fmtQty(request.requested_qty)} {request.unit_code}</strong>
+                <StatusBadge status={request.status} />
+              </div>
+              <small>Request #{request.id} by {request.source_team}</small>
+              <IssueList request={request} issues={rmIssues} />
+              <div style={{ marginTop: '1rem', marginBottom: '1rem' }}>
+                <label>
+                  QC Remarks
+                  <input
+                    placeholder="Required on reject..."
+                    value={remarks[request.id] || ''}
+                    onChange={(e) => setRemarks({ ...remarks, [request.id]: e.target.value })}
+                  />
+                </label>
+              </div>
+              <div className="button-row">
+                <button
+                  type="button"
+                  onClick={() =>
+                    submitAction(postJson(`/api/production-requests/${request.id}/qc`, { passed: true, remarks: remarks[request.id] }), 'Request passed QC')
+                  }
+                >
+                  <CheckCircle2 size={16} />
+                  Approve QC
+                </button>
+                <button
+                  className="danger"
+                  type="button"
+                  onClick={() => {
+                    if (!remarks[request.id]?.trim()) {
+                      alert('Remarks are required when rejecting.')
+                      return
+                    }
+                    submitAction(postJson(`/api/production-requests/${request.id}/qc`, { passed: false, remarks: remarks[request.id] }), 'Request rejected by QC')
+                  }}
+                >
+                  <XCircle size={16} />
+                  Reject
+                </button>
+              </div>
+            </article>
+          ))}
+        </div>
+      </section>
+    </div>
+  )
+}
+
+function QaDashboard({
+  workflow,
+  submitAction,
+  rmIssues,
+}: {
+  workflow: WorkflowData
+  submitAction: <T>(action: Promise<T>, message: string) => Promise<boolean>
+  rmIssues: WorkflowData['rmIssues']
+}) {
+  const pendingQa = workflow.productionRequests.filter((req) => req.status === 'PENDING_QA')
+  const [remarks, setRemarks] = useState<Record<number, string>>({})
+
+  return (
+    <div className="stack">
+      <section className="panel wide">
+        <PanelTitle icon={ClipboardCheck} title="QA Dashboard - Daily Material Requests" />
+        <div className="queue-list">
+          {pendingQa.length === 0 && <div className="empty">No material requests pending QA</div>}
+          {pendingQa.map((request) => (
+            <article className="queue-item" key={request.id}>
+              <div className="queue-heading">
+                <strong>{request.product_code} / {fmtQty(request.requested_qty)} {request.unit_code}</strong>
+                <StatusBadge status={request.status} />
+              </div>
+              <small>Request #{request.id} by {request.source_team}</small>
+              <IssueList request={request} issues={rmIssues} />
+              <div style={{ marginTop: '1rem', marginBottom: '1rem' }}>
+                <label>
+                  QA Remarks
+                  <input
+                    placeholder="Required on reject..."
+                    value={remarks[request.id] || ''}
+                    onChange={(e) => setRemarks({ ...remarks, [request.id]: e.target.value })}
+                  />
+                </label>
+              </div>
+              <div className="button-row">
+                <button
+                  type="button"
+                  onClick={() =>
+                    submitAction(postJson(`/api/production-requests/${request.id}/qa`, { passed: true, remarks: remarks[request.id] }), 'Request passed QA')
+                  }
+                >
+                  <CheckCircle2 size={16} />
+                  Approve QA
+                </button>
+                <button
+                  className="danger"
+                  type="button"
+                  onClick={() => {
+                    if (!remarks[request.id]?.trim()) {
+                      alert('Remarks are required when rejecting.')
+                      return
+                    }
+                    submitAction(postJson(`/api/production-requests/${request.id}/qa`, { passed: false, remarks: remarks[request.id] }), 'Request rejected by QA')
+                  }}
+                >
+                  <XCircle size={16} />
+                  Reject
+                </button>
+              </div>
+            </article>
+          ))}
+        </div>
+      </section>
+    </div>
+  )
+}
+
 function Production({
   targetForm,
   setTargetForm,
@@ -1080,12 +1234,32 @@ function Production({
     }
   }, [runForm.emp_code])
 
-  const pendingApproval = workflow.productionRequests.filter((request) => request.status === 'PENDING_RM_APPROVAL')
+  const pendingApproval = workflow.productionRequests.filter((request) => ['PENDING_QC', 'PENDING_QA', 'PENDING_RM_APPROVAL'].includes(request.status))
   const approved = workflow.productionRequests.filter((request) => request.status === 'RM_APPROVED')
+  const rejectedRequests = workflow.productionRequests.filter((request) => ['QC_REJECTED', 'QA_REJECTED'].includes(request.status))
 
 
   return (
     <div className="grid-two">
+      {rejectedRequests.length > 0 && (
+        <section className="panel span-two" style={{ border: '1px solid var(--danger)', backgroundColor: 'rgba(239, 68, 68, 0.05)' }}>
+          <PanelTitle icon={XCircle} title="Rejected Material Requests" />
+          <div className="queue-list" style={{ marginTop: '1rem' }}>
+            {rejectedRequests.map((request) => (
+              <article className="queue-item" key={request.id} style={{ borderColor: 'var(--danger)' }}>
+                <div className="queue-heading">
+                  <strong>{request.product_code} / {fmtQty(request.requested_qty)} {request.unit_code}</strong>
+                  <StatusBadge status={request.status} />
+                </div>
+                <small>Requested by: {request.source_team}</small>
+                <div style={{ marginTop: '0.5rem', padding: '0.5rem', backgroundColor: 'var(--surface)', borderRadius: '4px' }}>
+                  <strong>Rejection Remarks:</strong> {request.approval_remarks || 'No remarks provided.'}
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
+      )}
       <section className="panel span-two">
         <PanelTitle icon={Activity} title="Production Analytics" />
         <div className="grid-two">
@@ -1422,16 +1596,23 @@ function Production({
               <div className="button-row">
                 <button
                   type="button"
+                  disabled={request.status === 'PENDING_QC' || request.status === 'PENDING_QA'}
                   onClick={() =>
                     submitAction(postJson(`/api/production-requests/${request.id}/approve`, { approved: true, approval_remarks: approvalRemarks[request.id] }), 'RM issue approved')
                   }
                 >
-                  <CheckCircle2 size={16} />
-                  Approve Issue
+                  {request.status === 'PENDING_QC' ? (
+                    <>⏳ Waiting for QC</>
+                  ) : request.status === 'PENDING_QA' ? (
+                    <>⏳ Waiting for QA</>
+                  ) : (
+                    <><CheckCircle2 size={16} /> Approve Issue</>
+                  )}
                 </button>
                 <button
                   className="danger"
                   type="button"
+                  disabled={request.status === 'PENDING_QC' || request.status === 'PENDING_QA'}
                   onClick={() => {
                     if (!approvalRemarks[request.id]?.trim()) {
                       alert('Remarks are required when rejecting.')

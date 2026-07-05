@@ -135,6 +135,16 @@ export function createApp(db = initDatabase()) {
     res.json(request)
   })
 
+  app.post('/api/production-requests/:id/qc', requireUser(db), requireRoles('admin', 'manager', 'qc'), (req, res) => {
+    const request = qcProductionRequest(db, Number(req.params.id), req.body ?? {}, req.user.id)
+    res.json(request)
+  })
+
+  app.post('/api/production-requests/:id/qa', requireUser(db), requireRoles('admin', 'manager', 'qa'), (req, res) => {
+    const request = qaProductionRequest(db, Number(req.params.id), req.body ?? {}, req.user.id)
+    res.json(request)
+  })
+
   app.post('/api/production-runs', requireUser(db), requireRoles('admin', 'manager', 'production'), (req, res) => {
     const run = createProductionRun(db, req.body ?? {}, req.user.id)
     res.status(201).json(run)
@@ -936,6 +946,50 @@ function getProductionRequest(db, id) {
     JOIN products p ON p.id = pr.product_id
     WHERE pr.id = ?
   `).get(id)
+}
+
+function qcProductionRequest(db, requestId, body, userId) {
+  const request = db.prepare('SELECT * FROM production_requests WHERE id = ?').get(requestId)
+  if (!request) throw httpError(404, 'Production request not found')
+  if (request.status !== 'PENDING_QC') throw httpError(400, 'Only pending QC requests can be checked')
+
+  if (body.passed === false) {
+    if (!body.remarks) throw httpError(400, 'Remarks required for rejection')
+    db.prepare(`
+      UPDATE production_requests
+      SET status = 'QC_REJECTED', approved_by = ?, approved_at = ?, approval_remarks = ?
+      WHERE id = ?
+    `).run(userId, nowIso(), body.remarks, requestId)
+  } else {
+    db.prepare(`
+      UPDATE production_requests
+      SET status = 'PENDING_QA'
+      WHERE id = ?
+    `).run(requestId)
+  }
+  return getProductionRequest(db, requestId)
+}
+
+function qaProductionRequest(db, requestId, body, userId) {
+  const request = db.prepare('SELECT * FROM production_requests WHERE id = ?').get(requestId)
+  if (!request) throw httpError(404, 'Production request not found')
+  if (request.status !== 'PENDING_QA') throw httpError(400, 'Only pending QA requests can be checked')
+
+  if (body.passed === false) {
+    if (!body.remarks) throw httpError(400, 'Remarks required for rejection')
+    db.prepare(`
+      UPDATE production_requests
+      SET status = 'QA_REJECTED', approved_by = ?, approved_at = ?, approval_remarks = ?
+      WHERE id = ?
+    `).run(userId, nowIso(), body.remarks, requestId)
+  } else {
+    db.prepare(`
+      UPDATE production_requests
+      SET status = 'PENDING_RM_APPROVAL'
+      WHERE id = ?
+    `).run(requestId)
+  }
+  return getProductionRequest(db, requestId)
 }
 
 function approveProductionRequest(db, requestId, body, userId) {
