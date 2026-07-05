@@ -528,6 +528,11 @@ function App() {
             workflow={workflow}
             submitAction={submitAction}
             rmIssues={workflow.rmIssues}
+            batches={workflow.fgBatches}
+            qcParametersForBatch={fgParametersForBatch}
+            drafts={fgQcDrafts}
+            setDrafts={setFgQcDrafts}
+            getResults={getQcResults}
           />
         )}
         {activeTab === 'qa_dashboard' && (
@@ -535,17 +540,15 @@ function App() {
             workflow={workflow}
             submitAction={submitAction}
             rmIssues={workflow.rmIssues}
-          />
-        )}
-        {activeTab === 'qc' && (
-          <DayStore
             batches={workflow.fgBatches}
-            qcParametersForBatch={fgParametersForBatch}
             qaParametersForBatch={fgQaParametersForBatch}
             drafts={fgQcDrafts}
             setDrafts={setFgQcDrafts}
             getResults={getQcResults}
-            submitAction={submitAction}
+          />
+        )}
+        {activeTab === 'qc' && (
+          <DayStore
             productionRequests={workflow.productionRequests}
             rmIssues={workflow.rmIssues}
           />
@@ -1050,13 +1053,40 @@ function QcDashboard({
   workflow,
   submitAction,
   rmIssues,
+  batches,
+  qcParametersForBatch,
+  drafts,
+  setDrafts,
+  getResults,
 }: {
   workflow: WorkflowData
   submitAction: <T>(action: Promise<T>, message: string) => Promise<boolean>
   rmIssues: WorkflowData['rmIssues']
+  batches: FgBatch[]
+  qcParametersForBatch: (batch: FgBatch) => QcParameter[]
+  drafts: Record<number, QcDraft>
+  setDrafts: (value: Record<number, QcDraft>) => void
+  getResults: (parameters: QcParameter[], draft: QcDraft | undefined) => Array<{ parameter_id: number; value: string; passed: boolean }>
 }) {
   const pendingQc = workflow.productionRequests.filter((req) => req.status === 'PENDING_QC')
+  const fgQcPending = batches.filter((batch) => batch.status === 'QC_PENDING' || batch.status === 'QC_FAILED')
+  
   const [remarks, setRemarks] = useState<Record<number, string>>({})
+  const [qcRemarks, setQcRemarks] = useState<Record<number, string>>({})
+
+  function updateDraft(batchId: number, parameterId: number, patch: Partial<{ value: string; passed: boolean }>) {
+    setDrafts({
+      ...drafts,
+      [batchId]: {
+        ...drafts[batchId],
+        [parameterId]: {
+          value: drafts[batchId]?.[parameterId]?.value ?? '',
+          passed: drafts[batchId]?.[parameterId]?.passed ?? true,
+          ...patch,
+        },
+      },
+    })
+  }
 
   return (
     <div className="stack">
@@ -1111,6 +1141,79 @@ function QcDashboard({
           ))}
         </div>
       </section>
+
+      <section className="panel">
+        <PanelTitle icon={ClipboardCheck} title="FG QC Pending" />
+        <div className="queue-list">
+          {fgQcPending.length === 0 && <div className="empty">No batches pending QC</div>}
+          {fgQcPending.map((batch) => {
+            const parameters = qcParametersForBatch(batch)
+            return (
+              <article className="queue-item" key={batch.id}>
+                <div className="queue-heading">
+                  <strong>{batch.batch_code}</strong>
+                  <StatusBadge status={batch.status} />
+                </div>
+                <span>{batch.product_code} - {fmtQty(batch.quantity)} {batch.unit_code}</span>
+                <QcParameterInputs
+                  parameters={parameters}
+                  draft={drafts[batch.id]}
+                  onChange={(parameterId, patch) => updateDraft(batch.id, parameterId, patch)}
+                />
+                <div style={{ marginTop: '1rem', marginBottom: '1rem' }}>
+                  <label>
+                    Remarks
+                    <input
+                      placeholder="Required on fail..."
+                      value={qcRemarks[batch.id] || ''}
+                      onChange={(e) => setQcRemarks({ ...qcRemarks, [batch.id]: e.target.value })}
+                    />
+                  </label>
+                </div>
+                <div className="button-row">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      submitAction(
+                        postJson(`/api/fg-batches/${batch.id}/qc`, {
+                          passed: true,
+                          qc_remarks: qcRemarks[batch.id],
+                          results: getResults(parameters, drafts[batch.id]),
+                        }),
+                        'FG batch passed QC (Sent to QA)',
+                      )
+                    }
+                  >
+                    <CheckCircle2 size={16} />
+                    Sign Off
+                  </button>
+                  <button
+                    className="danger"
+                    type="button"
+                    onClick={() => {
+                      if (!qcRemarks[batch.id]?.trim()) {
+                        alert('Remarks are required when failing QC.')
+                        return
+                      }
+                      submitAction(
+                        postJson(`/api/fg-batches/${batch.id}/qc`, {
+                          passed: false,
+                          qc_remarks: qcRemarks[batch.id],
+                          results: getResults(parameters, drafts[batch.id]),
+                        }),
+                        'FG batch failed QC',
+                      )
+                    }}
+                  >
+                    <XCircle size={16} />
+                    Fail QC
+                  </button>
+                </div>
+              </article>
+            )
+          })}
+        </div>
+      </section>
     </div>
   )
 }
@@ -1119,13 +1222,40 @@ function QaDashboard({
   workflow,
   submitAction,
   rmIssues,
+  batches,
+  qaParametersForBatch,
+  drafts,
+  setDrafts,
+  getResults,
 }: {
   workflow: WorkflowData
   submitAction: <T>(action: Promise<T>, message: string) => Promise<boolean>
   rmIssues: WorkflowData['rmIssues']
+  batches: FgBatch[]
+  qaParametersForBatch: (batch: FgBatch) => QcParameter[]
+  drafts: Record<number, QcDraft>
+  setDrafts: (value: Record<number, QcDraft>) => void
+  getResults: (parameters: QcParameter[], draft: QcDraft | undefined) => Array<{ parameter_id: number; value: string; passed: boolean }>
 }) {
   const pendingQa = workflow.productionRequests.filter((req) => req.status === 'PENDING_QA')
+  const fgQaPending = batches.filter((batch) => batch.status === 'QA_PENDING' || batch.status === 'QA_FAILED')
+  
   const [remarks, setRemarks] = useState<Record<number, string>>({})
+  const [qaRemarks, setQaRemarks] = useState<Record<number, string>>({})
+
+  function updateDraft(batchId: number, parameterId: number, patch: Partial<{ value: string; passed: boolean }>) {
+    setDrafts({
+      ...drafts,
+      [batchId]: {
+        ...drafts[batchId],
+        [parameterId]: {
+          value: drafts[batchId]?.[parameterId]?.value ?? '',
+          passed: drafts[batchId]?.[parameterId]?.passed ?? true,
+          ...patch,
+        },
+      },
+    })
+  }
 
   return (
     <div className="stack">
@@ -1178,6 +1308,79 @@ function QaDashboard({
               </div>
             </article>
           ))}
+        </div>
+      </section>
+
+      <section className="panel wide">
+        <PanelTitle icon={ShieldCheck} title="FG QA Approval" />
+        <div className="queue-list">
+          {fgQaPending.length === 0 && <div className="empty">No batches pending QA</div>}
+          {fgQaPending.map((batch) => {
+            const parameters = qaParametersForBatch(batch)
+            return (
+              <article className="queue-item" key={batch.id}>
+                <div className="queue-heading">
+                  <strong>{batch.batch_code}</strong>
+                  <StatusBadge status={batch.status} />
+                </div>
+                <span>{batch.product_code} - {fmtQty(batch.quantity)} {batch.unit_code}</span>
+                <QcParameterInputs
+                  parameters={parameters}
+                  draft={drafts[batch.id]}
+                  onChange={(parameterId, patch) => updateDraft(batch.id, parameterId, patch)}
+                />
+                <div style={{ marginTop: '1rem', marginBottom: '1rem' }}>
+                  <label>
+                    Remarks
+                    <input
+                      placeholder="Required on reject..."
+                      value={qaRemarks[batch.id] || ''}
+                      onChange={(e) => setQaRemarks({ ...qaRemarks, [batch.id]: e.target.value })}
+                    />
+                  </label>
+                </div>
+                <div className="button-row">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      submitAction(
+                        postJson(`/api/fg-batches/${batch.id}/qa`, {
+                          passed: true,
+                          qa_remarks: qaRemarks[batch.id],
+                          results: getResults(parameters, drafts[batch.id]),
+                        }),
+                        'FG batch QA passed (Ready for Dispatch)',
+                      )
+                    }
+                  >
+                    <CheckCircle2 size={16} />
+                    Pass
+                  </button>
+                  <button
+                    className="danger"
+                    type="button"
+                    onClick={() => {
+                      if (!qaRemarks[batch.id]?.trim()) {
+                        alert('Remarks are required when rejecting QA.')
+                        return
+                      }
+                      submitAction(
+                        postJson(`/api/fg-batches/${batch.id}/qa`, {
+                          passed: false,
+                          qa_remarks: qaRemarks[batch.id],
+                          results: getResults(parameters, drafts[batch.id]),
+                        }),
+                        'FG batch failed QA',
+                      )
+                    }}
+                  >
+                    <XCircle size={16} />
+                    Fail
+                  </button>
+                </div>
+              </article>
+            )
+          })}
         </div>
       </section>
     </div>
@@ -1689,8 +1892,16 @@ function Production({
                   value={runForm.emp_code} 
                   onChange={(e) => setRunForm({ ...runForm, emp_code: e.target.value })} 
                   placeholder="e.g. EMP001"
+                  list="employee-suggestions"
                   required 
                 />
+                <datalist id="employee-suggestions">
+                  {bootstrap.employees.filter(e => e.active).map(emp => (
+                    <option key={emp.emp_code} value={emp.emp_code}>
+                      {emp.name} {emp.gender ? `(${emp.gender})` : ''}
+                    </option>
+                  ))}
+                </datalist>
               </label>
               <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
                 {operator ? (
@@ -1852,45 +2063,13 @@ function Production({
 }
 
 function DayStore({
-  batches,
-  qcParametersForBatch,
-  qaParametersForBatch,
-  drafts,
-  setDrafts,
-  getResults,
-  submitAction,
   productionRequests,
   rmIssues,
 }: {
-  batches: FgBatch[]
-  qcParametersForBatch: (batch: FgBatch) => QcParameter[]
-  qaParametersForBatch: (batch: FgBatch) => QcParameter[]
-  drafts: Record<number, QcDraft>
-  setDrafts: (value: Record<number, QcDraft>) => void
-  getResults: (parameters: QcParameter[], draft: QcDraft | undefined) => Array<{ parameter_id: number; value: string; passed: boolean }>
-  submitAction: <T>(action: Promise<T>, message: string) => Promise<boolean>
   productionRequests: ProductionRequest[]
   rmIssues: WorkflowData['rmIssues']
 }) {
-  const qcPending = batches.filter((batch) => batch.status === 'QC_PENDING' || batch.status === 'QC_FAILED')
-  const qaPending = batches.filter((batch) => batch.status === 'QA_PENDING' || batch.status === 'QA_FAILED')
   const rmStaging = productionRequests.filter((req) => req.status === 'RM_APPROVED')
-  const [qcRemarks, setQcRemarks] = useState<Record<number, string>>({})
-  const [qaRemarks, setQaRemarks] = useState<Record<number, string>>({})
-
-  function updateDraft(batchId: number, parameterId: number, patch: Partial<{ value: string; passed: boolean }>) {
-    setDrafts({
-      ...drafts,
-      [batchId]: {
-        ...drafts[batchId],
-        [parameterId]: {
-          value: drafts[batchId]?.[parameterId]?.value ?? '',
-          passed: drafts[batchId]?.[parameterId]?.passed ?? true,
-          ...patch,
-        },
-      },
-    })
-  }
 
   return (
     <div className="grid-two">
@@ -1911,151 +2090,6 @@ function DayStore({
         </div>
       </section>
 
-      <section className="panel">
-        <PanelTitle icon={ClipboardCheck} title="FG QC Pending" />
-        <div className="queue-list">
-          {qcPending.length === 0 && <div className="empty">No batches pending QC</div>}
-          {qcPending.map((batch) => {
-            const parameters = qcParametersForBatch(batch)
-            return (
-              <article className="queue-item" key={batch.id}>
-                <div className="queue-heading">
-                  <strong>{batch.batch_code}</strong>
-                  <StatusBadge status={batch.status} />
-                </div>
-                <span>{batch.product_code} - {fmtQty(batch.quantity)} {batch.unit_code}</span>
-                <QcParameterInputs
-                  parameters={parameters}
-                  draft={drafts[batch.id]}
-                  onChange={(parameterId, patch) => updateDraft(batch.id, parameterId, patch)}
-                />
-                <div style={{ marginTop: '1rem', marginBottom: '1rem' }}>
-                  <label>
-                    Remarks
-                    <input
-                      placeholder="Required on fail..."
-                      value={qcRemarks[batch.id] || ''}
-                      onChange={(e) => setQcRemarks({ ...qcRemarks, [batch.id]: e.target.value })}
-                    />
-                  </label>
-                </div>
-                <div className="button-row">
-                  <button
-                    type="button"
-                    onClick={() =>
-                      submitAction(
-                        postJson(`/api/fg-batches/${batch.id}/qc`, {
-                          passed: true,
-                          qc_remarks: qcRemarks[batch.id],
-                          results: getResults(parameters, drafts[batch.id]),
-                        }),
-                        'FG batch passed QC (Sent to QA)',
-                      )
-                    }
-                  >
-                    <CheckCircle2 size={16} />
-                    Sign Off
-                  </button>
-                  <button
-                    className="danger"
-                    type="button"
-                    onClick={() => {
-                      if (!qcRemarks[batch.id]?.trim()) {
-                        alert('Remarks are required when failing QC.')
-                        return
-                      }
-                      submitAction(
-                        postJson(`/api/fg-batches/${batch.id}/qc`, {
-                          passed: false,
-                          qc_remarks: qcRemarks[batch.id],
-                          results: getResults(parameters, drafts[batch.id]),
-                        }),
-                        'FG batch failed QC',
-                      )
-                    }}
-                  >
-                    <XCircle size={16} />
-                    Fail QC
-                  </button>
-                </div>
-              </article>
-            )
-          })}
-        </div>
-      </section>
-
-      <section className="panel wide">
-        <PanelTitle icon={ShieldCheck} title="FG QA Approval" />
-        <div className="queue-list">
-          {qaPending.length === 0 && <div className="empty">No batches pending QA</div>}
-          {qaPending.map((batch) => {
-            const parameters = qaParametersForBatch(batch)
-            return (
-              <article className="queue-item" key={batch.id}>
-                <div className="queue-heading">
-                  <strong>{batch.batch_code}</strong>
-                  <StatusBadge status={batch.status} />
-                </div>
-                <span>{batch.product_code} - {fmtQty(batch.quantity)} {batch.unit_code}</span>
-                <QcParameterInputs
-                  parameters={parameters}
-                  draft={drafts[batch.id]}
-                  onChange={(parameterId, patch) => updateDraft(batch.id, parameterId, patch)}
-                />
-                <div style={{ marginTop: '1rem', marginBottom: '1rem' }}>
-                  <label>
-                    Remarks
-                    <input
-                      placeholder="Required on reject..."
-                      value={qaRemarks[batch.id] || ''}
-                      onChange={(e) => setQaRemarks({ ...qaRemarks, [batch.id]: e.target.value })}
-                    />
-                  </label>
-                </div>
-                <div className="button-row">
-                  <button
-                    type="button"
-                    onClick={() =>
-                      submitAction(
-                        postJson(`/api/fg-batches/${batch.id}/qa`, {
-                          passed: true,
-                          qa_remarks: qaRemarks[batch.id],
-                          results: getResults(parameters, drafts[batch.id]),
-                        }),
-                        'FG batch QA passed (Ready for Dispatch)',
-                      )
-                    }
-                  >
-                    <CheckCircle2 size={16} />
-                    Pass
-                  </button>
-                  <button
-                    className="danger"
-                    type="button"
-                    onClick={() => {
-                      if (!qaRemarks[batch.id]?.trim()) {
-                        alert('Remarks are required when rejecting QA.')
-                        return
-                      }
-                      submitAction(
-                        postJson(`/api/fg-batches/${batch.id}/qa`, {
-                          passed: false,
-                          qa_remarks: qaRemarks[batch.id],
-                          results: getResults(parameters, drafts[batch.id]),
-                        }),
-                        'FG batch failed QA',
-                      )
-                    }}
-                  >
-                    <XCircle size={16} />
-                    Fail
-                  </button>
-                </div>
-              </article>
-            )
-          })}
-        </div>
-      </section>
       <section className="panel wide">
         <PanelTitle icon={PackageCheck} title="All Finished Batches" />
         <AjaxTable resource="fg-batches" columns={batchColumns} />
