@@ -860,7 +860,7 @@ function qc2RmReceipt(db, receiptId, body, userId) {
   return inTransaction(db, () => {
     const passed = Boolean(body.passed)
     const reworkNotes = body.rework_notes ? String(body.rework_notes) : null
-    const newStatus = passed ? 'APPROVED' : 'REJECTED'
+    const newStatus = passed ? 'PENDING_QA' : 'REJECTED'
     db.prepare(`
       UPDATE rm_receipts
       SET status = ?, rework_notes = ?
@@ -1081,6 +1081,11 @@ function createProductionRun(db, body, userId) {
   if (!request) throw httpError(404, 'Production request not found')
   if (request.status !== 'RM_APPROVED') throw httpError(400, 'Production can start only after RM approval')
 
+  const existingRun = db.prepare('SELECT id FROM production_runs WHERE request_id = ? AND shift = ?').get(requestId, shift)
+  if (existingRun) {
+    throw httpError(400, `A production run has already been recorded for Request #${requestId} in Shift ${shift}. Only one batch per shift is allowed.`)
+  }
+
   const allocations = db.prepare(`
     SELECT ria.*, ri.requested_qty
     FROM rm_issue_allocations ria
@@ -1160,19 +1165,14 @@ function calculateMinutes(startedAt, endedAt) {
 function generateBatchCode(db, productCode, shift, startedAt, productId) {
   const dateCode = formatDateCode(startedAt)
   const shiftSegment = segment(shift)
-  const prefix = `TP-${dateCode}-${shiftSegment}-`
-  let sequence = db.prepare(`
-    SELECT COUNT(*) AS count
-    FROM production_runs
-    WHERE product_id = ? AND batch_code LIKE ?
-  `).get(productId, `${prefix}%`).count + 1
-
-  while (true) {
-    const candidate = `${prefix}${String(sequence).padStart(3, '0')}`
-    const existing = db.prepare('SELECT id FROM production_runs WHERE batch_code = ?').get(candidate)
-    if (!existing) return candidate
-    sequence += 1
+  const candidate = `TP-${dateCode}-${shiftSegment}`
+  
+  const existing = db.prepare('SELECT id FROM fg_batches WHERE batch_code = ?').get(candidate)
+  if (existing) {
+    throw httpError(400, `A batch for this product in shift ${shift} today has already been generated (${candidate}). Only one batch per shift is allowed.`)
   }
+  
+  return candidate
 }
 
 function formatDateCode(value) {

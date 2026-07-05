@@ -1015,7 +1015,7 @@ function RmStore({
                   onClick={() =>
                     submitAction(
                       postJson(`/api/rm-receipts/${receipt.id}/qc2`, { passed: true, rework_notes: qc2Notes[receipt.id] }),
-                      'RM lot rework approved',
+                      'RM lot rework approved (Sent to QA)',
                     )
                   }
                 >
