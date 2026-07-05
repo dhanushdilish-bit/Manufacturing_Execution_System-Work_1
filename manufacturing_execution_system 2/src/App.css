@@ -703,3 +703,111 @@ td {
     width: 100%;
   }
 }
+
+@media print {
+  /* Hide everything in the app-shell by default during print */
+  body * {
+    visibility: hidden;
+  }
+  
+  /* Only show the print-container and its children */
+  .print-container, .print-container * {
+    visibility: visible;
+  }
+  
+  .print-container {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    margin: 0;
+    padding: 20px;
+    background: white;
+    box-sizing: border-box;
+  }
+
+  /* Make the ticket look professional */
+  .print-ticket {
+    border: 2px solid #000;
+    padding: 40px;
+    margin: 0 auto;
+    max-width: 800px;
+    font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  }
+
+  .print-ticket .header {
+    text-align: center;
+    border-bottom: 2px solid #000;
+    padding-bottom: 20px;
+    margin-bottom: 30px;
+  }
+
+  .print-ticket .header h1 {
+    margin: 0;
+    font-size: 24px;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+  }
+
+  .print-ticket .header p {
+    margin: 5px 0 0 0;
+    font-size: 14px;
+    color: #555;
+  }
+
+  .print-ticket .details-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+    margin-bottom: 30px;
+  }
+
+  .print-ticket .detail-item {
+    font-size: 14px;
+  }
+  
+  .print-ticket .detail-item strong {
+    display: block;
+    font-size: 11px;
+    text-transform: uppercase;
+    color: #666;
+    margin-bottom: 4px;
+  }
+
+  .print-ticket table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 50px;
+  }
+
+  .print-ticket th,
+  .print-ticket td {
+    border: 1px solid #000;
+    padding: 12px;
+    text-align: left;
+    font-size: 14px;
+  }
+
+  .print-ticket th {
+    background-color: #f5f5f5 !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+    text-transform: uppercase;
+    font-size: 12px;
+  }
+
+  .print-ticket .signatures {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 40px;
+    margin-top: 80px;
+  }
+
+  .print-ticket .sig-line {
+    border-top: 1px solid #000;
+    padding-top: 8px;
+    text-align: center;
+    font-size: 12px;
+    text-transform: uppercase;
+  }
+}

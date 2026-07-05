@@ -12,6 +12,7 @@ import {
   Search,
   Send,
   Settings,
+  Printer,
   ShieldCheck,
   Truck,
   Users,
@@ -210,6 +211,7 @@ function App() {
   const [summary, setSummary] = useState<DashboardSummary>(emptySummary)
   const [loading, setLoading] = useState(false)
   const [notice, setNotice] = useState<Notice>(null)
+  const [printingRequest, setPrintingRequest] = useState<ProductionRequest | null>(null)
   const [traceQuery, setTraceQuery] = useState('')
   const [trace, setTrace] = useState<TraceabilityResult | null>(null)
   const [rmQcDrafts, setRmQcDrafts] = useState<Record<number, QcDraft>>({})
@@ -518,6 +520,7 @@ function App() {
         )}
         {activeTab === 'production' && (
           <Production
+            onPrintRequest={(req) => { setPrintingRequest(req); setTimeout(() => { window.print(); setTimeout(() => setPrintingRequest(null), 100) }, 100) }}
             targetForm={targetForm}
             setTargetForm={setTargetForm}
             planForm={planForm}
@@ -558,6 +561,7 @@ function App() {
         )}
         {activeTab === 'qc' && (
           <DayStore
+            onPrintRequest={(req) => { setPrintingRequest(req); setTimeout(() => { window.print(); setTimeout(() => setPrintingRequest(null), 100) }, 100) }}
             productionRequests={workflow.productionRequests}
             rmIssues={workflow.rmIssues}
           />
@@ -601,6 +605,7 @@ function App() {
           />
         )}
       </section>
+      {printingRequest && <PrintTicket request={printingRequest} issues={workflow.rmIssues} />}
     </main>
   )
 }
@@ -1440,6 +1445,7 @@ function QaDashboard({
 }
 
 function Production({
+  onPrintRequest,
   targetForm,
   setTargetForm,
   planForm,
@@ -1453,6 +1459,7 @@ function Production({
   submitAction,
   userRole,
 }: {
+  onPrintRequest: (request: ProductionRequest) => void
   targetForm: Record<string, string>
   setTargetForm: (value: Record<string, string>) => void
   planForm: Record<string, string>
@@ -1835,7 +1842,12 @@ function Production({
             <article className="queue-item" key={request.id}>
               <div className="queue-heading">
                 <strong>{request.product_code} / {fmtQty(request.requested_qty)} {request.unit_code}</strong>
-                <StatusBadge status={request.status} />
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <button type="button" onClick={() => onPrintRequest(request)} className="icon-button" title="Print PDF" style={{ padding: '4px', height: 'auto', width: 'auto', minHeight: 0 }}>
+                    <Printer size={16} />
+                  </button>
+                  <StatusBadge status={request.status} />
+                </div>
               </div>
               <IssueList request={request} issues={workflow.rmIssues} />
               <div style={{ marginTop: '1rem', marginBottom: '1rem' }}>
@@ -2115,9 +2127,11 @@ function Production({
 }
 
 function DayStore({
+  onPrintRequest,
   productionRequests,
   rmIssues,
 }: {
+  onPrintRequest: (request: ProductionRequest) => void
   productionRequests: ProductionRequest[]
   rmIssues: WorkflowData['rmIssues']
 }) {
@@ -2133,7 +2147,12 @@ function DayStore({
             <article className="queue-item" key={request.id}>
               <div className="queue-heading">
                 <strong>{request.product_code} / {fmtQty(request.requested_qty)} {request.unit_code}</strong>
-                <StatusBadge status={request.status} />
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <button type="button" onClick={() => onPrintRequest(request)} className="icon-button" title="Print PDF" style={{ padding: '4px', height: 'auto', width: 'auto', minHeight: 0 }}>
+                    <Printer size={16} />
+                  </button>
+                  <StatusBadge status={request.status} />
+                </div>
               </div>
               <small>Request #{request.id} • Due: {request.due_date || 'N/A'}</small>
               <IssueList request={request} issues={rmIssues} showStaged />
@@ -3519,6 +3538,78 @@ function PublicTraceability({ batchCode }: { batchCode: string }) {
           </section>
         </div>
       )}
+    </div>
+  )
+}
+
+function PrintTicket({ request, issues }: { request: ProductionRequest; issues: WorkflowData['rmIssues'] }) {
+  const matching = issues.filter((issue) => issue.request_id === request.id)
+  
+  return (
+    <div className="print-container">
+      <div className="print-ticket">
+        <div className="header">
+          <h1>Material Request Ticket</h1>
+          <p>MES System Generated</p>
+        </div>
+        
+        <div className="details-grid">
+          <div className="detail-item">
+            <strong>Request ID</strong>
+            {request.id}
+          </div>
+          <div className="detail-item">
+            <strong>Date / Time</strong>
+            {new Date().toLocaleString()}
+          </div>
+          <div className="detail-item">
+            <strong>Target Product</strong>
+            {request.product_code}
+          </div>
+          <div className="detail-item">
+            <strong>Requested Qty</strong>
+            {fmtQty(request.requested_qty)} {request.unit_code}
+          </div>
+          <div className="detail-item">
+            <strong>Source Team</strong>
+            {request.source_team || 'N/A'}
+          </div>
+          <div className="detail-item">
+            <strong>Priority</strong>
+            {request.priority}
+          </div>
+        </div>
+
+        <table>
+          <thead>
+            <tr>
+              <th>Material Code</th>
+              <th>Required Quantity</th>
+              <th>Staged Quantity</th>
+            </tr>
+          </thead>
+          <tbody>
+            {matching.length === 0 && (
+              <tr>
+                <td colSpan={3} style={{ textAlign: 'center', padding: '20px' }}>No raw materials defined</td>
+              </tr>
+            )}
+            {matching.map(issue => (
+              <tr key={issue.id}>
+                <td>{issue.material_code}</td>
+                <td>{fmtQty(issue.requested_qty)} {issue.unit_code}</td>
+                <td>{issue.staged_qty != null ? fmtQty(Number(issue.staged_qty)) : '0'} {issue.unit_code}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+
+        <div className="signatures">
+          <div className="sig-line">Requested By</div>
+          <div className="sig-line">Approved By</div>
+          <div className="sig-line">Issued By</div>
+        </div>
+      </div>
     </div>
   )
 }
