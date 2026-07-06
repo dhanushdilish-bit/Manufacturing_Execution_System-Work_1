@@ -26,6 +26,7 @@ import {
   PieChart, Pie, Cell, BarChart, Bar, AreaChart, Area
 } from 'recharts'
 import { getProductionTrend, getQcYield, getTargetVsActual, getWasteTrend } from './analytics'
+import Swal from 'sweetalert2'
 import type {
 
   BootstrapData,
@@ -1856,9 +1857,25 @@ function Production({
         <PanelTitle icon={ClipboardCheck} title="Daily Material Request" />
         <form
           className="form-grid"
-          onSubmit={(event) => {
+          onSubmit={async (event) => {
             event.preventDefault()
-            submitAction(postJson('/api/production-requests', requestForm), 'Production request submitted')
+            const success = await submitAction(postJson('/api/production-requests', requestForm), 'Production request submitted')
+            if (success) {
+              Swal.fire({
+                title: 'Success!',
+                text: 'Daily Material Request has been submitted successfully.',
+                icon: 'success',
+                confirmButtonText: 'OK'
+              })
+              setRequestForm({
+                plan_id: '',
+                product_id: '',
+                requested_qty: '',
+                source_team: 'Production',
+                priority: 'NORMAL',
+                remarks: '',
+              })
+            }
           }}
         >
           <label>
