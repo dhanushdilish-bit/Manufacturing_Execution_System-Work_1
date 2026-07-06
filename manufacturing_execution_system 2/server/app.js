@@ -140,12 +140,12 @@ export function createApp(db = initDatabase()) {
     res.status(201).json(target)
   })
 
-  app.post('/api/production-plans', requireUser(db), requireRoles('admin', 'manager', 'production'), (req, res) => {
+  app.post('/api/production-plans', requireUser(db), requireRoles('admin', 'manager', 'production', 'production_head'), (req, res) => {
     const plan = createProductionPlan(db, req.body ?? {}, req.user.id)
     res.status(201).json(plan)
   })
 
-  app.post('/api/production-requests', requireUser(db), requireRoles('admin', 'manager', 'production'), (req, res) => {
+  app.post('/api/production-requests', requireUser(db), requireRoles('admin', 'manager', 'production', 'production_head'), (req, res) => {
     const request = createProductionRequest(db, req.body ?? {}, req.user.id)
     res.status(201).json(request)
   })
@@ -405,7 +405,7 @@ function requireRoles(...roles) {
   const allowed = new Set(roles)
   return (req, _res, next) => {
     if (ADMIN_ROLES.has(req.user.role) || allowed.has(req.user.role)) return next()
-    next(httpError(403, 'Your role cannot perform this action'))
+    next(httpError(403, `${roles.join(', ')} can perform this action`))
   }
 }
 
@@ -446,7 +446,7 @@ function inTransaction(db, work) {
 
 function getBootstrap(db, user) {
   return {
-    roles: user.role === 'admin' ? listRoles(db) : [],
+    roles: listRoles(db),
     users: user.role === 'admin' ? listUsers(db) : [],
     units: listResource(db, 'units'),
     rawMaterials: listResource(db, 'raw-materials'),

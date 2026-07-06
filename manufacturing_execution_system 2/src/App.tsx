@@ -97,7 +97,7 @@ const tabs: Array<{
   { key: 'production', label: 'Production', icon: Factory, roles: ['admin', 'manager', 'production', 'rm_store', 'production_head'] },
   { key: 'qc_dashboard', label: 'QC Dashboard', icon: FlaskConical, roles: ['admin', 'manager', 'qc'] },
   { key: 'qa_dashboard', label: 'QA Dashboard', icon: ClipboardCheck, roles: ['admin', 'manager', 'qa'] },
-  { key: 'qc', label: 'Day Store', icon: Warehouse, roles: ['admin', 'manager', 'qc', 'qa', 'production'] },
+  { key: 'qc', label: 'Day Store', icon: Warehouse, roles: ['admin', 'manager', 'qc', 'qa', 'production', 'production_head'] },
   { key: 'fg', label: 'FG & Dispatch', icon: Truck, roles: ['admin', 'manager', 'fg_store', 'dispatch'] },
   { key: 'traceability', label: 'Traceability', icon: Search, roles: ['all'] },
   { key: 'users', label: 'Admin / Security', icon: ShieldCheck, roles: ['admin'] },
@@ -509,10 +509,6 @@ function App() {
             setForm={setRmReceiptForm}
             bootstrap={bootstrap}
             receipts={workflow.rmReceipts}
-            parametersForReceipt={rmParametersForReceipt}
-            drafts={rmQcDrafts}
-            setDrafts={setRmQcDrafts}
-            getResults={getQcResults}
             submitAction={submitAction}
           />
         )}
@@ -543,6 +539,10 @@ function App() {
             drafts={fgQcDrafts}
             setDrafts={setFgQcDrafts}
             getResults={getQcResults}
+            rmReceipts={workflow.rmReceipts}
+            rmParametersForReceipt={rmParametersForReceipt}
+            rmDrafts={rmQcDrafts}
+            setRmDrafts={setRmQcDrafts}
           />
         )}
         {activeTab === 'qa_dashboard' && (
@@ -555,6 +555,7 @@ function App() {
             drafts={fgQcDrafts}
             setDrafts={setFgQcDrafts}
             getResults={getQcResults}
+            rmReceipts={workflow.rmReceipts}
           />
         )}
         {activeTab === 'qc' && (
@@ -629,6 +630,7 @@ function Dashboard({ summary, workflow }: { summary: DashboardSummary; workflow:
 
   return (
     <div className="stack">
+
       <section className="metric-grid">
         {cards.map(([label, value, suffix]) => (
           <div className="metric" key={label}>
@@ -697,47 +699,20 @@ function RmStore({
   setForm,
   bootstrap,
   receipts,
-  parametersForReceipt,
-  drafts,
-  setDrafts,
-  getResults,
   submitAction,
 }: {
   form: Record<string, string>
   setForm: (value: Record<string, string>) => void
   bootstrap: BootstrapData
   receipts: RmReceipt[]
-  parametersForReceipt: (receipt: RmReceipt) => QcParameter[]
-  drafts: Record<number, QcDraft>
-  setDrafts: (value: Record<number, QcDraft>) => void
-  getResults: (parameters: QcParameter[], draft: QcDraft | undefined) => Array<{ parameter_id: number; value: string; passed: boolean }>
   submitAction: <T>(action: Promise<T>, message: string) => Promise<boolean>
 }) {
-  const pending = receipts.filter((receipt) => receipt.status === 'PENDING_QC' || receipt.status === 'HOLD')
-  const pendingQa = receipts.filter((receipt) => receipt.status === 'PENDING_QA')
-  const pendingQc2 = receipts.filter((receipt) => receipt.status === 'PENDING_QC2')
-  const [qcModes, setQcModes] = useState<Record<number, 'detailed' | 'simple'>>({})
-  const [qcRemarks, setQcRemarks] = useState<Record<number, string>>({})
-  const [qcQuantities, setQcQuantities] = useState<Record<number, { accepted: number, rejected: number }>>({})
-  const [qaRemarks, setQaRemarks] = useState<Record<number, string>>({})
-  const [qc2Notes, setQc2Notes] = useState<Record<number, string>>({})
+  const pending = receipts.filter((receipt) => receipt.status === 'PENDING_QC' || receipt.status === 'HOLD' || receipt.qc_remarks)
+  const pendingQa = receipts.filter((receipt) => receipt.status === 'PENDING_QA' || receipt.qa_remarks)
+  const pendingQc2 = receipts.filter((receipt) => receipt.status === 'PENDING_QC2' || receipt.rework_notes)
 
   const selectedMaterial = bootstrap.rawMaterials.find(m => m.id === Number(form.material_id))
   const selectedMaterialUnit = selectedMaterial?.unit_code
-
-  function updateDraft(receiptId: number, parameterId: number, patch: Partial<{ value: string; passed: boolean }>) {
-    setDrafts({
-      ...drafts,
-      [receiptId]: {
-        ...drafts[receiptId],
-        [parameterId]: {
-          value: drafts[receiptId]?.[parameterId]?.value ?? '',
-          passed: drafts[receiptId]?.[parameterId]?.passed ?? true,
-          ...patch,
-        },
-      },
-    })
-  }
 
   return (
     <div className="grid-two">
@@ -832,165 +807,33 @@ function RmStore({
       </section>
 
       <section className="panel">
-        <PanelTitle icon={FlaskConical} title="Incoming QC" />
+        <PanelTitle icon={FlaskConical} title="Incoming QC Status" />
         <div className="queue-list">
-          {pending.length === 0 && <div className="empty">No pending RM QC</div>}
-          {pending.map((receipt) => {
-            let parameters = parametersForReceipt(receipt)
-            parameters = [...parameters].sort((a, b) => {
-              const order: Record<string, number> = { 'Visual inspection': 1, 'Moisture %': 2, 'Supplier certificate': 3 }
-              return (order[a.label] || 99) - (order[b.label] || 99)
-            })
-
-            const mode = qcModes[receipt.id] || 'detailed'
-            const visibleParameters = mode === 'simple'
-              ? parameters.filter((p) => p.label === 'Supplier certificate')
-              : parameters
-
-            return (
-              <article className="queue-item" key={receipt.id}>
-                <div className="queue-heading">
-                  <strong>
-                    {receipt.material_code} / {receipt.lot_number}
-                  </strong>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <select
-                      value={mode}
-                      onChange={(e) => setQcModes({ ...qcModes, [receipt.id]: e.target.value as 'detailed' | 'simple' })}
-                      style={{ width: 'auto', padding: '2px 8px', fontSize: '12px', minHeight: '26px' }}
-                    >
-                      <option value="detailed">Detailed QC</option>
-                      <option value="simple">Simple QC</option>
-                    </select>
-                    <StatusBadge status={receipt.status} />
-                  </div>
+          {pending.length === 0 && <div className="empty">No recent QC activity</div>}
+          {pending.map((receipt) => (
+            <article className="queue-item" key={receipt.id}>
+              <div className="queue-heading">
+                <strong>
+                  {receipt.material_code} / {receipt.lot_number}
+                </strong>
+                <StatusBadge status={receipt.status} />
+              </div>
+              <span>{fmtQty(receipt.quantity)} {receipt.quantity_unit_code || receipt.unit_code} from {receipt.supplier}</span>
+              {receipt.qc_remarks && (
+                <div style={{ marginTop: '8px', padding: '8px', backgroundColor: 'var(--bg-muted)', borderRadius: '4px' }}>
+                  <strong>QC Message:</strong> {receipt.qc_remarks}
+                  {receipt.qc_by_name && <span> (by {receipt.qc_by_name})</span>}
                 </div>
-                <span>{fmtQty(receipt.quantity)} {receipt.quantity_unit_code || receipt.unit_code} from {receipt.supplier}</span>
-                <QcParameterInputs
-                  parameters={visibleParameters}
-                  draft={drafts[receipt.id]}
-                  onChange={(parameterId, patch) => updateDraft(receipt.id, parameterId, patch)}
-                />
-                <div style={{ marginTop: '1rem', marginBottom: '1rem' }}>
-                  <div className="grid-two" style={{ gap: '1rem', marginBottom: '0.5rem' }}>
-                    <label>
-                      Good / Accepted Qty
-                      <input
-                        type="number"
-                        min="0"
-                        step="0.001"
-                        value={qcQuantities[receipt.id]?.accepted ?? receipt.quantity}
-                        onChange={(e) => {
-                          const accepted = Number(e.target.value)
-                          const rejected = Math.max(0, receipt.quantity - accepted)
-                          setQcQuantities({ ...qcQuantities, [receipt.id]: { accepted, rejected } })
-                        }}
-                      />
-                    </label>
-                    <label>
-                      Damaged / Rejected Qty
-                      <input
-                        type="number"
-                        min="0"
-                        step="0.001"
-                        value={qcQuantities[receipt.id]?.rejected ?? 0}
-                        onChange={(e) => {
-                          const rejected = Number(e.target.value)
-                          const accepted = Math.max(0, receipt.quantity - rejected)
-                          setQcQuantities({ ...qcQuantities, [receipt.id]: { accepted, rejected } })
-                        }}
-                      />
-                    </label>
-                  </div>
-                  <label>
-                    Remarks
-                    <input
-                      placeholder="Required on hold/reject..."
-                      value={qcRemarks[receipt.id] || ''}
-                      onChange={(e) => setQcRemarks({ ...qcRemarks, [receipt.id]: e.target.value })}
-                    />
-                  </label>
-                </div>
-                <div className="button-row">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const accepted = qcQuantities[receipt.id]?.accepted ?? receipt.quantity
-                      const rejected = qcQuantities[receipt.id]?.rejected ?? 0
-                      const isRejected = accepted === 0
-                      
-                      submitAction(
-                        postJson(`/api/rm-receipts/${receipt.id}/qc`, {
-                          passed: !isRejected,
-                          disposition: isRejected ? (mode === 'detailed' ? 'HOLD' : 'REJECTED') : undefined,
-                          qc_remarks: qcRemarks[receipt.id],
-                          accepted_qty: accepted,
-                          rejected_qty: rejected,
-                          results: getResults(visibleParameters, drafts[receipt.id]),
-                        }),
-                        isRejected ? 'RM lot held/rejected' : 'RM lot approved',
-                      )
-                    }}
-                  >
-                    <CheckCircle2 size={16} />
-                    Submit QC
-                  </button>
-                  {mode === 'detailed' && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const accepted = qcQuantities[receipt.id]?.accepted ?? receipt.quantity
-                        const rejected = qcQuantities[receipt.id]?.rejected ?? 0
-                        
-                        submitAction(
-                          postJson(`/api/rm-receipts/${receipt.id}/qc`, {
-                            passed: false,
-                            disposition: 'HOLD',
-                            qc_remarks: qcRemarks[receipt.id],
-                            accepted_qty: accepted,
-                            rejected_qty: rejected,
-                            results: getResults(visibleParameters, drafts[receipt.id]),
-                          }),
-                          'RM lot held',
-                        )
-                      }}
-                    >
-                      <ShieldCheck size={16} />
-                      Hold
-                    </button>
-                  )}
-                  <button
-                    className="danger"
-                    type="button"
-                    onClick={() => {
-                      if (!qcRemarks[receipt.id]?.trim()) {
-                        alert('Remarks are required when rejecting.')
-                        return
-                      }
-                      submitAction(
-                        postJson(`/api/rm-receipts/${receipt.id}/qc`, {
-                          passed: false,
-                          qc_remarks: qcRemarks[receipt.id],
-                          results: getResults(visibleParameters, drafts[receipt.id]),
-                        }),
-                        'RM lot rejected',
-                      )
-                    }}
-                  >
-                    <XCircle size={16} />
-                    Fail
-                  </button>
-                </div>
-              </article>
-            )
-          })}
+              )}
+            </article>
+          ))}
         </div>
       </section>
 
       <section className="panel">
-        <PanelTitle icon={ClipboardCheck} title="QA Approval" />
+        <PanelTitle icon={ClipboardCheck} title="QA Approval Status" />
         <div className="queue-list">
-          {pendingQa.length === 0 && <div className="empty">No pending QA approvals</div>}
+          {pendingQa.length === 0 && <div className="empty">No recent QA activity</div>}
           {pendingQa.map((receipt) => (
             <article className="queue-item" key={receipt.id}>
               <div className="queue-heading">
@@ -1000,56 +843,21 @@ function RmStore({
                 <StatusBadge status={receipt.status} />
               </div>
               <span>{fmtQty(receipt.quantity)} {receipt.unit_code} from {receipt.supplier}</span>
-              <div style={{ marginTop: '1rem', marginBottom: '1rem' }}>
-                <label>
-                  Remarks
-                  <input
-                    placeholder="Required on reject..."
-                    value={qaRemarks[receipt.id] || ''}
-                    onChange={(e) => setQaRemarks({ ...qaRemarks, [receipt.id]: e.target.value })}
-                  />
-                </label>
-              </div>
-              <div className="button-row">
-                <button
-                  type="button"
-                  onClick={() =>
-                    submitAction(
-                      postJson(`/api/rm-receipts/${receipt.id}/qa`, { passed: true, qa_remarks: qaRemarks[receipt.id] }),
-                      'RM lot QA approved',
-                    )
-                  }
-                >
-                  <CheckCircle2 size={16} />
-                  Pass
-                </button>
-                <button
-                  className="danger"
-                  type="button"
-                  onClick={() => {
-                    if (!qaRemarks[receipt.id]?.trim()) {
-                      alert('Remarks are required when rejecting.')
-                      return
-                    }
-                    submitAction(
-                      postJson(`/api/rm-receipts/${receipt.id}/qa`, { passed: false, qa_remarks: qaRemarks[receipt.id] }),
-                      'RM lot QA rejected',
-                    )
-                  }}
-                >
-                  <XCircle size={16} />
-                  Fail
-                </button>
-              </div>
+              {receipt.qa_remarks && (
+                <div style={{ marginTop: '8px', padding: '8px', backgroundColor: 'var(--bg-muted)', borderRadius: '4px' }}>
+                  <strong>QA Message:</strong> {receipt.qa_remarks}
+                  {receipt.qa_by_name && <span> (by {receipt.qa_by_name})</span>}
+                </div>
+              )}
             </article>
           ))}
         </div>
       </section>
 
       <section className="panel">
-        <PanelTitle icon={FlaskConical} title="QC 2 (Rework)" />
+        <PanelTitle icon={FlaskConical} title="QC 2 (Rework) Status" />
         <div className="queue-list">
-          {pendingQc2.length === 0 && <div className="empty">No pending QC 2 items</div>}
+          {pendingQc2.length === 0 && <div className="empty">No recent QC 2 items</div>}
           {pendingQc2.map((receipt) => (
             <article className="queue-item" key={receipt.id}>
               <div className="queue-heading">
@@ -1059,43 +867,11 @@ function RmStore({
                 <StatusBadge status={receipt.status} />
               </div>
               <span>{fmtQty(receipt.quantity)} {receipt.unit_code} from {receipt.supplier}</span>
-              <div className="form-grid" style={{ marginTop: '0.5rem' }}>
-                <label>
-                  Rework Notes
-                  <input
-                    value={qc2Notes[receipt.id] || ''}
-                    onChange={(e) => setQc2Notes({ ...qc2Notes, [receipt.id]: e.target.value })}
-                    placeholder="Enter rework details..."
-                  />
-                </label>
-              </div>
-              <div className="button-row" style={{ marginTop: '0.5rem' }}>
-                <button
-                  type="button"
-                  onClick={() =>
-                    submitAction(
-                      postJson(`/api/rm-receipts/${receipt.id}/qc2`, { passed: true, rework_notes: qc2Notes[receipt.id] }),
-                      'RM lot rework approved (Sent to QA)',
-                    )
-                  }
-                >
-                  <CheckCircle2 size={16} />
-                  Approve Rework
-                </button>
-                <button
-                  className="danger"
-                  type="button"
-                  onClick={() =>
-                    submitAction(
-                      postJson(`/api/rm-receipts/${receipt.id}/qc2`, { passed: false, rework_notes: qc2Notes[receipt.id] }),
-                      'RM lot final reject',
-                    )
-                  }
-                >
-                  <XCircle size={16} />
-                  Final Reject
-                </button>
-              </div>
+              {receipt.rework_notes && (
+                <div style={{ marginTop: '8px', padding: '8px', backgroundColor: 'var(--bg-muted)', borderRadius: '4px' }}>
+                  <strong>Rework Notes:</strong> {receipt.rework_notes}
+                </div>
+              )}
             </article>
           ))}
         </div>
@@ -1118,6 +894,10 @@ function QcDashboard({
   drafts,
   setDrafts,
   getResults,
+  rmReceipts,
+  rmParametersForReceipt,
+  rmDrafts,
+  setRmDrafts,
 }: {
   workflow: WorkflowData
   submitAction: <T>(action: Promise<T>, message: string) => Promise<boolean>
@@ -1127,12 +907,38 @@ function QcDashboard({
   drafts: Record<number, QcDraft>
   setDrafts: (value: Record<number, QcDraft>) => void
   getResults: (parameters: QcParameter[], draft: QcDraft | undefined) => Array<{ parameter_id: number; value: string; passed: boolean }>
+  rmReceipts: RmReceipt[]
+  rmParametersForReceipt: (receipt: RmReceipt) => QcParameter[]
+  rmDrafts: Record<number, QcDraft>
+  setRmDrafts: (value: Record<number, QcDraft>) => void
 }) {
   const pendingQc = workflow.productionRequests.filter((req) => req.status === 'PENDING_QC')
   const fgQcPending = batches.filter((batch) => batch.status === 'QC_PENDING' || batch.status === 'QC_FAILED')
+
+  const rmPendingQc = rmReceipts.filter((receipt) => receipt.status === 'PENDING_QC' || receipt.status === 'HOLD')
+  const rmPendingQc2 = rmReceipts.filter((receipt) => receipt.status === 'PENDING_QC2')
   
   const [remarks, setRemarks] = useState<Record<number, string>>({})
   const [qcRemarks, setQcRemarks] = useState<Record<number, string>>({})
+
+  const [rmQcModes, setRmQcModes] = useState<Record<number, 'detailed' | 'simple'>>({})
+  const [rmQcQuantities, setRmQcQuantities] = useState<Record<number, { accepted: number, rejected: number }>>({})
+  const [rmQcRemarks, setRmQcRemarks] = useState<Record<number, string>>({})
+  const [rmQc2Notes, setRmQc2Notes] = useState<Record<number, string>>({})
+
+  function updateRmDraft(receiptId: number, parameterId: number, patch: Partial<{ value: string; passed: boolean }>) {
+    setRmDrafts({
+      ...rmDrafts,
+      [receiptId]: {
+        ...rmDrafts[receiptId],
+        [parameterId]: {
+          value: rmDrafts[receiptId]?.[parameterId]?.value ?? '',
+          passed: rmDrafts[receiptId]?.[parameterId]?.passed ?? true,
+          ...patch,
+        },
+      },
+    })
+  }
 
   function updateDraft(batchId: number, parameterId: number, patch: Partial<{ value: string; passed: boolean }>) {
     setDrafts({
@@ -1150,6 +956,216 @@ function QcDashboard({
 
   return (
     <div className="stack">
+      <section className="panel">
+        <PanelTitle icon={FlaskConical} title="Incoming RM QC" />
+        <div className="queue-list">
+          {rmPendingQc.length === 0 && <div className="empty">No pending RM QC</div>}
+          {rmPendingQc.map((receipt) => {
+            let parameters = rmParametersForReceipt(receipt)
+            parameters = [...parameters].sort((a, b) => {
+              const order: Record<string, number> = { 'Visual inspection': 1, 'Moisture %': 2, 'Supplier certificate': 3 }
+              return (order[a.label] || 99) - (order[b.label] || 99)
+            })
+
+            const mode = rmQcModes[receipt.id] || 'detailed'
+            const visibleParameters = mode === 'simple'
+              ? parameters.filter((p) => p.label === 'Supplier certificate')
+              : parameters
+
+            return (
+              <article className="queue-item" key={receipt.id}>
+                <div className="queue-heading">
+                  <strong>
+                    {receipt.material_code} / {receipt.lot_number}
+                  </strong>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <select
+                      value={mode}
+                      onChange={(e) => setRmQcModes({ ...rmQcModes, [receipt.id]: e.target.value as 'detailed' | 'simple' })}
+                      style={{ width: 'auto', padding: '2px 8px', fontSize: '12px', minHeight: '26px' }}
+                    >
+                      <option value="detailed">Detailed QC</option>
+                      <option value="simple">Simple QC</option>
+                    </select>
+                    <StatusBadge status={receipt.status} />
+                  </div>
+                </div>
+                <span>{fmtQty(receipt.quantity)} {receipt.quantity_unit_code || receipt.unit_code} from {receipt.supplier}</span>
+                <QcParameterInputs
+                  parameters={visibleParameters}
+                  draft={rmDrafts[receipt.id]}
+                  onChange={(parameterId, patch) => updateRmDraft(receipt.id, parameterId, patch)}
+                />
+                <div style={{ marginTop: '1rem', marginBottom: '1rem' }}>
+                  <div className="grid-two" style={{ gap: '1rem', marginBottom: '0.5rem' }}>
+                    <label>
+                      Good / Accepted Qty
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.001"
+                        value={rmQcQuantities[receipt.id]?.accepted ?? receipt.quantity}
+                        onChange={(e) => {
+                          const accepted = Number(e.target.value)
+                          const rejected = Math.max(0, receipt.quantity - accepted)
+                          setRmQcQuantities({ ...rmQcQuantities, [receipt.id]: { accepted, rejected } })
+                        }}
+                      />
+                    </label>
+                    <label>
+                      Damaged / Rejected Qty
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.001"
+                        value={rmQcQuantities[receipt.id]?.rejected ?? 0}
+                        onChange={(e) => {
+                          const rejected = Number(e.target.value)
+                          const accepted = Math.max(0, receipt.quantity - rejected)
+                          setRmQcQuantities({ ...rmQcQuantities, [receipt.id]: { accepted, rejected } })
+                        }}
+                      />
+                    </label>
+                  </div>
+                  <label>
+                    Remarks
+                    <input
+                      placeholder="Required on hold/reject..."
+                      value={rmQcRemarks[receipt.id] || ''}
+                      onChange={(e) => setRmQcRemarks({ ...rmQcRemarks, [receipt.id]: e.target.value })}
+                    />
+                  </label>
+                </div>
+                <div className="button-row">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const accepted = rmQcQuantities[receipt.id]?.accepted ?? receipt.quantity
+                      const rejected = rmQcQuantities[receipt.id]?.rejected ?? 0
+                      const isRejected = accepted === 0
+                      
+                      submitAction(
+                        postJson(`/api/rm-receipts/${receipt.id}/qc`, {
+                          passed: !isRejected,
+                          disposition: isRejected ? (mode === 'detailed' ? 'HOLD' : 'REJECTED') : undefined,
+                          qc_remarks: rmQcRemarks[receipt.id],
+                          accepted_qty: accepted,
+                          rejected_qty: rejected,
+                          results: getResults(visibleParameters, rmDrafts[receipt.id]),
+                        }),
+                        isRejected ? 'RM lot held/rejected' : 'RM lot approved',
+                      )
+                    }}
+                  >
+                    <CheckCircle2 size={16} />
+                    Submit QC
+                  </button>
+                  {mode === 'detailed' && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const accepted = rmQcQuantities[receipt.id]?.accepted ?? receipt.quantity
+                        const rejected = rmQcQuantities[receipt.id]?.rejected ?? 0
+                        
+                        submitAction(
+                          postJson(`/api/rm-receipts/${receipt.id}/qc`, {
+                            passed: false,
+                            disposition: 'HOLD',
+                            qc_remarks: rmQcRemarks[receipt.id],
+                            accepted_qty: accepted,
+                            rejected_qty: rejected,
+                            results: getResults(visibleParameters, rmDrafts[receipt.id]),
+                          }),
+                          'RM lot held',
+                        )
+                      }}
+                    >
+                      <ShieldCheck size={16} />
+                      Hold
+                    </button>
+                  )}
+                  <button
+                    className="danger"
+                    type="button"
+                    onClick={() => {
+                      if (!rmQcRemarks[receipt.id]?.trim()) {
+                        alert('Remarks are required when rejecting.')
+                        return
+                      }
+                      submitAction(
+                        postJson(`/api/rm-receipts/${receipt.id}/qc`, {
+                          passed: false,
+                          qc_remarks: rmQcRemarks[receipt.id],
+                          results: getResults(visibleParameters, rmDrafts[receipt.id]),
+                        }),
+                        'RM lot rejected',
+                      )
+                    }}
+                  >
+                    <XCircle size={16} />
+                    Fail
+                  </button>
+                </div>
+              </article>
+            )
+          })}
+        </div>
+      </section>
+
+      <section className="panel">
+        <PanelTitle icon={FlaskConical} title="RM QC 2 (Rework)" />
+        <div className="queue-list">
+          {rmPendingQc2.length === 0 && <div className="empty">No pending QC 2 items</div>}
+          {rmPendingQc2.map((receipt) => (
+            <article className="queue-item" key={receipt.id}>
+              <div className="queue-heading">
+                <strong>
+                  {receipt.material_code} / {receipt.lot_number}
+                </strong>
+                <StatusBadge status={receipt.status} />
+              </div>
+              <span>{fmtQty(receipt.quantity)} {receipt.unit_code} from {receipt.supplier}</span>
+              <div className="form-grid" style={{ marginTop: '0.5rem' }}>
+                <label>
+                  Rework Notes
+                  <input
+                    value={rmQc2Notes[receipt.id] || ''}
+                    onChange={(e) => setRmQc2Notes({ ...rmQc2Notes, [receipt.id]: e.target.value })}
+                    placeholder="Enter rework details..."
+                  />
+                </label>
+              </div>
+              <div className="button-row" style={{ marginTop: '0.5rem' }}>
+                <button
+                  type="button"
+                  onClick={() =>
+                    submitAction(
+                      postJson(`/api/rm-receipts/${receipt.id}/qc2`, { passed: true, rework_notes: rmQc2Notes[receipt.id] }),
+                      'RM lot rework approved (Sent to QA)',
+                    )
+                  }
+                >
+                  <CheckCircle2 size={16} />
+                  Approve Rework
+                </button>
+                <button
+                  className="danger"
+                  type="button"
+                  onClick={() =>
+                    submitAction(
+                      postJson(`/api/rm-receipts/${receipt.id}/qc2`, { passed: false, rework_notes: rmQc2Notes[receipt.id] }),
+                      'RM lot final reject',
+                    )
+                  }
+                >
+                  <XCircle size={16} />
+                  Final Reject
+                </button>
+              </div>
+            </article>
+          ))}
+        </div>
+      </section>
       <section className="panel wide">
         <PanelTitle icon={FlaskConical} title="QC Dashboard - Daily Material Requests" />
         <div className="queue-list">
@@ -1287,6 +1303,7 @@ function QaDashboard({
   drafts,
   setDrafts,
   getResults,
+  rmReceipts,
 }: {
   workflow: WorkflowData
   submitAction: <T>(action: Promise<T>, message: string) => Promise<boolean>
@@ -1296,12 +1313,17 @@ function QaDashboard({
   drafts: Record<number, QcDraft>
   setDrafts: (value: Record<number, QcDraft>) => void
   getResults: (parameters: QcParameter[], draft: QcDraft | undefined) => Array<{ parameter_id: number; value: string; passed: boolean }>
+  rmReceipts: RmReceipt[]
 }) {
   const pendingQa = workflow.productionRequests.filter((req) => req.status === 'PENDING_QA')
   const fgQaPending = batches.filter((batch) => batch.status === 'QA_PENDING' || batch.status === 'QA_FAILED')
   
+  const rmPendingQa = rmReceipts.filter((receipt) => receipt.status === 'PENDING_QA')
+
   const [remarks, setRemarks] = useState<Record<number, string>>({})
   const [qaRemarks, setQaRemarks] = useState<Record<number, string>>({})
+  
+  const [rmQaRemarks, setRmQaRemarks] = useState<Record<number, string>>({})
 
   function updateDraft(batchId: number, parameterId: number, patch: Partial<{ value: string; passed: boolean }>) {
     setDrafts({
@@ -1319,6 +1341,66 @@ function QaDashboard({
 
   return (
     <div className="stack">
+
+      <section className="panel">
+        <PanelTitle icon={ClipboardCheck} title="RM QA Approval" />
+        <div className="queue-list">
+          {rmPendingQa.length === 0 && <div className="empty">No pending RM QA approvals</div>}
+          {rmPendingQa.map((receipt) => (
+            <article className="queue-item" key={receipt.id}>
+              <div className="queue-heading">
+                <strong>
+                  {receipt.material_code} / {receipt.lot_number}
+                </strong>
+                <StatusBadge status={receipt.status} />
+              </div>
+              <span>{fmtQty(receipt.quantity)} {receipt.unit_code} from {receipt.supplier}</span>
+              <div style={{ marginTop: '1rem', marginBottom: '1rem' }}>
+                <label>
+                  Remarks
+                  <input
+                    placeholder="Required on reject..."
+                    value={rmQaRemarks[receipt.id] || ''}
+                    onChange={(e) => setRmQaRemarks({ ...rmQaRemarks, [receipt.id]: e.target.value })}
+                  />
+                </label>
+              </div>
+              <div className="button-row">
+                <button
+                  type="button"
+                  onClick={() =>
+                    submitAction(
+                      postJson(`/api/rm-receipts/${receipt.id}/qa`, { passed: true, qa_remarks: rmQaRemarks[receipt.id] }),
+                      'RM lot QA approved',
+                    )
+                  }
+                >
+                  <CheckCircle2 size={16} />
+                  Pass
+                </button>
+                <button
+                  className="danger"
+                  type="button"
+                  onClick={() => {
+                    if (!rmQaRemarks[receipt.id]?.trim()) {
+                      alert('Remarks are required when rejecting.')
+                      return
+                    }
+                    submitAction(
+                      postJson(`/api/rm-receipts/${receipt.id}/qa`, { passed: false, qa_remarks: rmQaRemarks[receipt.id] }),
+                      'RM lot QA rejected',
+                    )
+                  }}
+                >
+                  <XCircle size={16} />
+                  Fail
+                </button>
+              </div>
+            </article>
+          ))}
+        </div>
+      </section>
+
       <section className="panel wide">
         <PanelTitle icon={ClipboardCheck} title="QA Dashboard - Daily Material Requests" />
         <div className="queue-list">
@@ -1502,7 +1584,23 @@ function Production({
   const pendingApproval = workflow.productionRequests.filter((request) => ['PENDING_QC', 'PENDING_QA', 'PENDING_RM_APPROVAL'].includes(request.status))
   const approved = workflow.productionRequests.filter((request) => request.status === 'RM_APPROVED')
   const rejectedRequests = workflow.productionRequests.filter((request) => ['QC_REJECTED', 'QA_REJECTED'].includes(request.status))
+  function getActualForTarget(targetId: number) {
+    return workflow.productionRuns
+      .filter((run) => {
+        const req = workflow.productionRequests.find((r) => r.id === run.request_id)
+        if (!req) return false
+        const plan = workflow.productionPlans.find((p) => p.id === req.plan_id)
+        if (!plan) return false
+        return plan.target_id === targetId
+      })
+      .reduce((sum, run) => sum + (Number(run.quantity_produced) || 0), 0)
+  }
 
+  function getPlannedForTarget(targetId: number) {
+    return workflow.productionPlans
+      .filter((plan) => plan.target_id === targetId && plan.status !== 'CANCELLED')
+      .reduce((sum, plan) => sum + (Number(plan.planned_qty) || 0), 0)
+  }
 
   return (
     <div className="grid-two">
@@ -1525,6 +1623,7 @@ function Production({
           </div>
         </section>
       )}
+      {userRole !== 'production_head' && (
       <section className="panel span-two">
         <PanelTitle icon={Activity} title="Production Analytics" />
         <div className="grid-two">
@@ -1559,7 +1658,8 @@ function Production({
           </div>
         </div>
       </section>
-      {['admin', 'manager'].includes(userRole) && (
+      )}
+      {['admin', 'production'].includes(userRole) && (
         <section className="panel">
           <PanelTitle icon={Activity} title="Production Request" />
           <form
@@ -1622,9 +1722,7 @@ function Production({
           </form>
           <div className="queue-list" style={{ marginTop: '1rem' }}>
             {workflow.productionTargets.map((target) => {
-              const actual = workflow.productionRuns
-                .filter((run) => run.product_id === target.product_id)
-                .reduce((sum, run) => sum + (Number(run.quantity_produced) || 0), 0)
+              const actual = getActualForTarget(target.id)
               const remaining = Math.max(0, target.target_qty - actual)
               return (
                 <article className="queue-item" key={target.id}>
@@ -1666,10 +1764,8 @@ function Production({
             >
               <option value="">Select Target</option>
               {workflow.productionTargets.filter(t => t.status === 'ACTIVE').map((target) => {
-                const actual = workflow.productionRuns
-                  .filter((run) => run.product_id === target.product_id)
-                  .reduce((sum, run) => sum + (Number(run.quantity_produced) || 0), 0)
-                const remaining = Math.max(0, target.target_qty - actual)
+                const planned = getPlannedForTarget(target.id)
+                const remaining = Math.max(0, target.target_qty - planned)
                 return (
                   <option key={target.id} value={target.id}>
                     #{target.id} {target.product_code} (Target: {fmtQty(target.target_qty)} | Remaining: {fmtQty(remaining)})
@@ -2125,10 +2221,12 @@ function Production({
       </section>
       )}
 
+      {userRole !== 'production_head' && (
       <section className="panel wide">
         <PanelTitle icon={ClipboardCheck} title="Production History" />
         <AjaxTable resource="production-runs" columns={runColumns} />
       </section>
+      )}
     </div>
   )
 }

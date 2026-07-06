@@ -464,7 +464,7 @@ function seedDatabase(db) {
     ['manager', 'Manager', JSON.stringify(['dashboard', 'rm', 'production', 'qc_dashboard', 'qa_dashboard', 'qc', 'fg', 'traceability', 'master'])],
     ['rm_store', 'RM Store Manager', JSON.stringify(['dashboard', 'rm', 'production', 'traceability'])],
     ['production', 'Production Team', JSON.stringify(['dashboard', 'production', 'qc', 'traceability'])],
-    ['production_head', 'Production Head', JSON.stringify(['dashboard', 'production', 'traceability'])],
+    ['production_head', 'Production Head', JSON.stringify(['dashboard', 'production', 'qc', 'traceability'])],
     ['qc', 'QC Supervisor', JSON.stringify(['dashboard', 'rm', 'qc_dashboard', 'qc', 'traceability'])],
     ['qa', 'QA Supervisor', JSON.stringify(['dashboard', 'rm', 'qa_dashboard', 'qc', 'traceability'])],
     ['fg_store', 'FG Store Manager', JSON.stringify(['dashboard', 'fg', 'traceability'])],
