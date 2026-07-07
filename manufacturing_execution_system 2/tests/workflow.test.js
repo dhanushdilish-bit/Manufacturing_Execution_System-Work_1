@@ -211,6 +211,11 @@ describe('MES workflow rules', () => {
       },
     })
 
+    await mustOk(`/api/fg-batches/${batchId}/qa`, {
+      method: 'POST',
+      body: { passed: true, results: [{ value: 'Pass', passed: true }] },
+    })
+
     const tooLargeDispatch = await api('/api/dispatches', {
       method: 'POST',
       body: {
@@ -290,12 +295,25 @@ async function receiveOnly({ materialCode, quantity, lot }) {
 
 async function receiveAndQc({ materialCode, quantity, lot, passed }) {
   const receipt = await receiveOnly({ materialCode, quantity, lot })
-  return mustOk(`/api/rm-receipts/${receipt.id}/qc`, {
+  await mustOk(`/api/rm-receipts/${receipt.id}/qc`, {
     method: 'POST',
     body: {
       passed,
       results: [{ value: passed ? 'Pass' : 'Fail', passed }],
     },
+  })
+
+  // A pass at first QC moves the lot to PENDING_QA, which QA then approves.
+  // A fail moves it to PENDING_QC2, a second check which finally rejects it.
+  if (passed) {
+    return mustOk(`/api/rm-receipts/${receipt.id}/qa`, {
+      method: 'POST',
+      body: { passed: true, qa_remarks: 'QA approved' },
+    })
+  }
+  return mustOk(`/api/rm-receipts/${receipt.id}/qc2`, {
+    method: 'POST',
+    body: { passed: false, rework_notes: 'Rejected at second QC check' },
   })
 }
 
@@ -307,7 +325,7 @@ async function seedApprovedRailMaterials() {
 
 async function createProductionRequest(quantity) {
   const product = db.prepare("SELECT id FROM products WHERE code = 'RAIL'").get()
-  return mustOk('/api/production-requests', {
+  const request = await mustOk('/api/production-requests', {
     method: 'POST',
     body: {
       product_id: product.id,
@@ -316,6 +334,18 @@ async function createProductionRequest(quantity) {
       priority: 'NORMAL',
     },
   })
+
+  // Requests must clear QC and QA before they're eligible for RM approval.
+  await mustOk(`/api/production-requests/${request.id}/qc`, {
+    method: 'POST',
+    body: { passed: true, remarks: 'QC ok' },
+  })
+  await mustOk(`/api/production-requests/${request.id}/qa`, {
+    method: 'POST',
+    body: { passed: true, remarks: 'QA ok' },
+  })
+
+  return request
 }
 
 function resetOperationalTables() {

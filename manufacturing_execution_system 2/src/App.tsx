@@ -721,9 +721,19 @@ function RmStore({
         <PanelTitle icon={Boxes} title="Raw Material Arrival" />
         <form
           className="form-grid"
-          onSubmit={(event) => {
+          onSubmit={async (event) => {
             event.preventDefault()
-            submitAction(postJson('/api/rm-receipts', form), 'RM receipt recorded')
+            const result = await Swal.fire({
+              title: 'Add Receipt',
+              text: 'Are you sure you want to add this receipt?',
+              icon: 'question',
+              showCancelButton: true,
+              confirmButtonText: 'Yes, add it',
+              cancelButtonText: 'Cancel'
+            })
+            if (result.isConfirmed) {
+              submitAction(postJson('/api/rm-receipts', form), 'RM receipt recorded')
+            }
           }}
         >
           <label>
@@ -1040,7 +1050,17 @@ function QcDashboard({
                 <div className="button-row">
                   <button
                     type="button"
-                    onClick={() => {
+                    onClick={async () => {
+                      const result = await Swal.fire({
+                        title: 'Submit QC',
+                        text: 'Are you sure you want to submit QC results?',
+                        icon: 'question',
+                        showCancelButton: true,
+                        confirmButtonText: 'Yes, submit',
+                        cancelButtonText: 'Cancel'
+                      })
+                      if (!result.isConfirmed) return;
+
                       const accepted = rmQcQuantities[receipt.id]?.accepted ?? receipt.quantity
                       const rejected = rmQcQuantities[receipt.id]?.rejected ?? 0
                       const isRejected = accepted === 0
@@ -1369,12 +1389,22 @@ function QaDashboard({
               <div className="button-row">
                 <button
                   type="button"
-                  onClick={() =>
-                    submitAction(
-                      postJson(`/api/rm-receipts/${receipt.id}/qa`, { passed: true, qa_remarks: rmQaRemarks[receipt.id] }),
-                      'RM lot QA approved',
-                    )
-                  }
+                  onClick={async () => {
+                    const result = await Swal.fire({
+                      title: 'Approve RM Lot',
+                      text: 'Are you sure you want to pass this RM lot?',
+                      icon: 'question',
+                      showCancelButton: true,
+                      confirmButtonText: 'Yes, pass it',
+                      cancelButtonText: 'Cancel'
+                    })
+                    if (result.isConfirmed) {
+                      submitAction(
+                        postJson(`/api/rm-receipts/${receipt.id}/qa`, { passed: true, qa_remarks: rmQaRemarks[receipt.id] }),
+                        'RM lot QA approved',
+                      )
+                    }
+                  }}
                 >
                   <CheckCircle2 size={16} />
                   Pass
@@ -1665,9 +1695,19 @@ function Production({
           <PanelTitle icon={Activity} title="Production Request" />
           <form
             className="form-grid"
-            onSubmit={(event) => {
+            onSubmit={async (event) => {
               event.preventDefault()
-              submitAction(postJson('/api/production-targets', targetForm), 'Production target created')
+              const result = await Swal.fire({
+                title: 'Set Target',
+                text: 'Are you sure you want to set this production target?',
+                icon: 'question',
+                showCancelButton: true,
+                confirmButtonText: 'Yes, set it',
+                cancelButtonText: 'Cancel'
+              })
+              if (result.isConfirmed) {
+                submitAction(postJson('/api/production-targets', targetForm), 'Production target created')
+              }
             }}
           >
             <label>

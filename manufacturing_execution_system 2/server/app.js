@@ -1267,15 +1267,22 @@ function calculateMinutes(startedAt, endedAt) {
 
 function generateBatchCode(db, productCode, shift, startedAt, productId) {
   const dateCode = formatDateCode(startedAt)
+  const productSegment = segment(productCode)
   const shiftSegment = segment(shift)
-  const candidate = `TP-${dateCode}-${shiftSegment}`
-  
-  const existing = db.prepare('SELECT id FROM fg_batches WHERE batch_code = ?').get(candidate)
-  if (existing) {
-    throw httpError(400, `A batch for this product in shift ${shift} today has already been generated (${candidate}). Only one batch per shift is allowed.`)
+  const prefix = `BATCH-${dateCode}-${productSegment}-${shiftSegment}-`
+
+  let sequence = db.prepare(`
+    SELECT COUNT(*) AS count
+    FROM production_runs
+    WHERE product_id = ? AND batch_code LIKE ?
+  `).get(productId, `${prefix}%`).count + 1
+
+  while (true) {
+    const candidate = `${prefix}${String(sequence).padStart(3, '0')}`
+    const existing = db.prepare('SELECT id FROM production_runs WHERE batch_code = ?').get(candidate)
+    if (!existing) return candidate
+    sequence += 1
   }
-  
-  return candidate
 }
 
 function formatDateCode(value) {
