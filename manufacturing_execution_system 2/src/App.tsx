@@ -1783,8 +1783,18 @@ function Production({
         <PanelTitle icon={Factory} title="Production Planning" />
         <form
           className="form-grid"
-          onSubmit={(event) => {
+          onSubmit={async (event) => {
             event.preventDefault()
+            const result = await Swal.fire({
+              title: 'Create Plan',
+              text: 'Are you sure you want to create this production plan?',
+              icon: 'question',
+              showCancelButton: true,
+              confirmButtonText: 'Yes, create it',
+              cancelButtonText: 'Cancel'
+            })
+            if (!result.isConfirmed) return
+
             const target = workflow.productionTargets.find((t) => t.id === Number(planForm.target_id))
             const productId = target ? target.product_id : planForm.product_id
 
@@ -1899,6 +1909,17 @@ function Production({
           className="form-grid"
           onSubmit={async (event) => {
             event.preventDefault()
+
+            const confirmResult = await Swal.fire({
+              title: 'Submit Request',
+              text: 'Are you sure you want to submit this material request?',
+              icon: 'question',
+              showCancelButton: true,
+              confirmButtonText: 'Yes, submit it',
+              cancelButtonText: 'Cancel'
+            })
+            if (!confirmResult.isConfirmed) return
+
             const success = await submitAction(postJson('/api/production-requests', requestForm), 'Production request submitted')
             if (success) {
               Swal.fire({
@@ -2062,6 +2083,17 @@ function Production({
           className="stack"
           onSubmit={async (event) => {
             event.preventDefault()
+
+            const confirmResult = await Swal.fire({
+              title: 'Complete Run',
+              text: 'Are you sure you want to complete this production run?',
+              icon: 'question',
+              showCancelButton: true,
+              confirmButtonText: 'Yes, complete it',
+              cancelButtonText: 'Cancel'
+            })
+            if (!confirmResult.isConfirmed) return
+
             const success = await submitAction(postJson('/api/production-runs', runForm), 'Batch generated and moved to Day Store')
             if (success) {
               setRunForm({
@@ -2352,8 +2384,18 @@ function FgAndDispatch({
         <PanelTitle icon={Send} title="Dispatch Release" />
         <form
           className="form-grid"
-          onSubmit={(event) => {
+          onSubmit={async (event) => {
             event.preventDefault()
+            const confirmResult = await Swal.fire({
+              title: 'Release Dispatch',
+              text: 'Are you sure you want to release this dispatch?',
+              icon: 'question',
+              showCancelButton: true,
+              confirmButtonText: 'Yes, release it',
+              cancelButtonText: 'Cancel'
+            })
+            if (!confirmResult.isConfirmed) return
+
             submitAction(postJson('/api/dispatches', { ...form, transport_type: transportType }), 'Dispatch logged')
           }}
         >

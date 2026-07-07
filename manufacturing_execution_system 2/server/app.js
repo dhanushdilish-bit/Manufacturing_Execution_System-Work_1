@@ -235,7 +235,12 @@ export function createApp(db = initDatabase()) {
           baseSql = `
             SELECT rr.*, rm.code AS material_code, rm.name AS material_name, u.code AS unit_code,
                    qc.name AS qc_by_name, qa.name AS qa_by_name, creator.name AS created_by_name,
-                   (COALESCE(rr.accepted_qty, rr.quantity) - COALESCE((SELECT SUM(quantity) FROM rm_issue_allocations WHERE receipt_id = rr.id), 0)) AS available_qty
+                   (COALESCE(rr.accepted_qty, rr.quantity) - COALESCE((
+                     SELECT SUM(COALESCE(pc.actual_qty, ria.quantity))
+                     FROM rm_issue_allocations ria
+                     LEFT JOIN production_consumption pc ON pc.allocation_id = ria.id
+                     WHERE ria.receipt_id = rr.id
+                   ), 0)) AS available_qty
             FROM rm_receipts rr
             JOIN raw_materials rm ON rm.id = rr.material_id
             JOIN units u ON u.id = rm.unit_id
@@ -1126,9 +1131,10 @@ function approveProductionRequest(db, requestId, body, userId) {
 
 function allocateIssue(db, issue) {
   const availableLots = db.prepare(`
-    SELECT rr.id, COALESCE(rr.accepted_qty, rr.quantity) - COALESCE(SUM(ria.quantity), 0) AS available_qty
+    SELECT rr.id, COALESCE(rr.accepted_qty, rr.quantity) - COALESCE(SUM(COALESCE(pc.actual_qty, ria.quantity)), 0) AS available_qty
     FROM rm_receipts rr
     LEFT JOIN rm_issue_allocations ria ON ria.receipt_id = rr.id
+    LEFT JOIN production_consumption pc ON pc.allocation_id = ria.id
     WHERE rr.material_id = ? AND rr.status = 'APPROVED'
     GROUP BY rr.id
     HAVING available_qty > 0
