@@ -212,6 +212,19 @@ function App() {
     return () => window.removeEventListener('hashchange', handleHashChange)
   }, [])
 
+  function getDefaultTab(role: string): TabKey {
+    switch (role) {
+      case 'rm_store': return 'rm'
+      case 'production':
+      case 'production_head': return 'production'
+      case 'qc': return 'qc_dashboard'
+      case 'qa': return 'qa_dashboard'
+      case 'fg_store':
+      case 'dispatch': return 'fg'
+      default: return 'dashboard'
+    }
+  }
+
   const [rmReceiptForm, setRmReceiptForm] = useState<Record<string, string>>({
     material_id: '',
     supplier: '',
@@ -305,6 +318,7 @@ function App() {
     api<{ user: User }>('/api/me')
       .then(({ user: restoredUser }) => {
         setUser(restoredUser)
+        setActiveTab(getDefaultTab(restoredUser.role))
         return loadData()
       })
       .catch(() => localStorage.removeItem('mes-token'))
@@ -334,6 +348,7 @@ function App() {
       const result = await postJson<{ user: User; token: string }>('/api/auth/login', login)
       localStorage.setItem('mes-token', result.token)
       setUser(result.user)
+      setActiveTab(getDefaultTab(result.user.role))
       setNotice({ type: 'success', message: `Signed in as ${result.user.name}` })
       await loadData()
     } catch (error) {
@@ -354,6 +369,7 @@ function App() {
     try {
       await action
       setNotice({ type: 'success', message })
+      window.dispatchEvent(new Event('mes-data-changed'))
       await loadData()
       return true
     } catch (error) {
@@ -732,13 +748,40 @@ function RmStore({
               cancelButtonText: 'Cancel'
             })
             if (result.isConfirmed) {
-              submitAction(postJson('/api/rm-receipts', form), 'RM receipt recorded')
+              const success = await submitAction(postJson('/api/rm-receipts', form), 'RM receipt recorded')
+              if (success) {
+                setForm({
+                  material_id: '',
+                  supplier: '',
+                  lot_number: '',
+                  quantity: '',
+                  quantity_unit_id: '',
+                  po_number: '',
+                  po_date: '',
+                  invoice_number: '',
+                  invoice_date: '',
+                  hsn_code: '',
+                  remarks: ''
+                })
+              }
             }
           }}
         >
           <label>
             Material
-            <select value={form.material_id} onChange={(event) => setForm({ ...form, material_id: event.target.value })} required>
+            <select 
+              value={form.material_id} 
+              onChange={(event) => {
+                const newMaterialId = event.target.value
+                const selectedMaterial = bootstrap.rawMaterials.find(m => m.id === Number(newMaterialId))
+                setForm({ 
+                  ...form, 
+                  material_id: newMaterialId,
+                  hsn_code: selectedMaterial ? selectedMaterial.code : ''
+                })
+              }} 
+              required
+            >
               <option value="">Select</option>
               {bootstrap.rawMaterials.map((material) => (
                 <option key={material.id} value={material.id}>
@@ -1212,9 +1255,19 @@ function QcDashboard({
               <div className="button-row">
                 <button
                   type="button"
-                  onClick={() =>
-                    submitAction(postJson(`/api/production-requests/${request.id}/qc`, { passed: true, remarks: remarks[request.id] }), 'Request passed QC')
-                  }
+                  onClick={async () => {
+                    const result = await Swal.fire({
+                      title: 'Approve QC',
+                      text: 'Are you sure you want to approve this QC request?',
+                      icon: 'question',
+                      showCancelButton: true,
+                      confirmButtonText: 'Yes, approve it',
+                      cancelButtonText: 'Cancel'
+                    })
+                    if (result.isConfirmed) {
+                      submitAction(postJson(`/api/production-requests/${request.id}/qc`, { passed: true, remarks: remarks[request.id] }), 'Request passed QC')
+                    }
+                  }}
                 >
                   <CheckCircle2 size={16} />
                   Approve QC
@@ -1270,16 +1323,26 @@ function QcDashboard({
                 <div className="button-row">
                   <button
                     type="button"
-                    onClick={() =>
-                      submitAction(
-                        postJson(`/api/fg-batches/${batch.id}/qc`, {
-                          passed: true,
-                          qc_remarks: qcRemarks[batch.id],
-                          results: getResults(parameters, drafts[batch.id]),
-                        }),
-                        'FG batch passed QC (Sent to QA)',
-                      )
-                    }
+                    onClick={async () => {
+                      const result = await Swal.fire({
+                        title: 'Sign Off',
+                        text: 'Are you sure you want to sign off and approve this FG batch?',
+                        icon: 'question',
+                        showCancelButton: true,
+                        confirmButtonText: 'Yes, sign off',
+                        cancelButtonText: 'Cancel'
+                      })
+                      if (result.isConfirmed) {
+                        submitAction(
+                          postJson(`/api/fg-batches/${batch.id}/qc`, {
+                            passed: true,
+                            qc_remarks: qcRemarks[batch.id],
+                            results: getResults(parameters, drafts[batch.id]),
+                          }),
+                          'FG batch passed QC (Sent to QA)',
+                        )
+                      }
+                    }}
                   >
                     <CheckCircle2 size={16} />
                     Sign Off
@@ -1457,9 +1520,19 @@ function QaDashboard({
               <div className="button-row">
                 <button
                   type="button"
-                  onClick={() =>
-                    submitAction(postJson(`/api/production-requests/${request.id}/qa`, { passed: true, remarks: remarks[request.id] }), 'Request passed QA')
-                  }
+                  onClick={async () => {
+                    const result = await Swal.fire({
+                      title: 'Approve QA',
+                      text: 'Are you sure you want to approve this QA request?',
+                      icon: 'question',
+                      showCancelButton: true,
+                      confirmButtonText: 'Yes, approve it',
+                      cancelButtonText: 'Cancel'
+                    })
+                    if (result.isConfirmed) {
+                      submitAction(postJson(`/api/production-requests/${request.id}/qa`, { passed: true, remarks: remarks[request.id] }), 'Request passed QA')
+                    }
+                  }}
                 >
                   <CheckCircle2 size={16} />
                   Approve QA
@@ -1515,16 +1588,26 @@ function QaDashboard({
                 <div className="button-row">
                   <button
                     type="button"
-                    onClick={() =>
-                      submitAction(
-                        postJson(`/api/fg-batches/${batch.id}/qa`, {
-                          passed: true,
-                          qa_remarks: qaRemarks[batch.id],
-                          results: getResults(parameters, drafts[batch.id]),
-                        }),
-                        'FG batch QA passed (Ready for Dispatch)',
-                      )
-                    }
+                    onClick={async () => {
+                      const result = await Swal.fire({
+                        title: 'Pass QA',
+                        text: 'Are you sure you want to pass QA for this FG batch?',
+                        icon: 'question',
+                        showCancelButton: true,
+                        confirmButtonText: 'Yes, pass it',
+                        cancelButtonText: 'Cancel'
+                      })
+                      if (result.isConfirmed) {
+                        submitAction(
+                          postJson(`/api/fg-batches/${batch.id}/qa`, {
+                            passed: true,
+                            qa_remarks: qaRemarks[batch.id],
+                            results: getResults(parameters, drafts[batch.id]),
+                          }),
+                          'FG batch QA passed (Ready for Dispatch)',
+                        )
+                      }
+                    }}
                   >
                     <CheckCircle2 size={16} />
                     Pass
@@ -1690,9 +1773,10 @@ function Production({
         </div>
       </section>
       )}
+
       {['admin', 'production'].includes(userRole) && (
         <section className="panel">
-          <PanelTitle icon={Activity} title="Production Request" />
+          <PanelTitle icon={Activity} title="Production Target" />
           <form
             className="form-grid"
             onSubmit={async (event) => {
@@ -1763,12 +1847,13 @@ function Production({
           </form>
           <div className="queue-list" style={{ marginTop: '1rem' }}>
             {workflow.productionTargets.map((target) => {
+              const planned = getPlannedForTarget(target.id)
               const actual = getActualForTarget(target.id)
-              const remaining = Math.max(0, target.target_qty - actual)
+              const remainingToPlan = Math.max(0, target.target_qty - planned)
               return (
                 <article className="queue-item" key={target.id}>
                   <div className="queue-heading">
-                    <strong>{target.product_code} / Total: {fmtQty(target.target_qty)} / Remaining: {fmtQty(remaining)} {target.unit_code}</strong>
+                    <strong>{target.product_code} / Target: {fmtQty(target.target_qty)} / Planned: {fmtQty(planned)} / Produced: {fmtQty(actual)} / Remaining: {fmtQty(remainingToPlan)} {target.unit_code}</strong>
                     <StatusBadge status={target.status} />
                   </div>
                   <small>By {target.created_by_name} {target.end_date ? `until ${target.end_date}` : ''}</small>
@@ -2042,9 +2127,19 @@ function Production({
                 <button
                   type="button"
                   disabled={request.status === 'PENDING_QC' || request.status === 'PENDING_QA'}
-                  onClick={() =>
-                    submitAction(postJson(`/api/production-requests/${request.id}/approve`, { approved: true, approval_remarks: approvalRemarks[request.id] }), 'RM issue approved')
-                  }
+                  onClick={async () => {
+                    const result = await Swal.fire({
+                      title: 'Approve Issue',
+                      text: 'Are you sure you want to approve this RM issue?',
+                      icon: 'question',
+                      showCancelButton: true,
+                      confirmButtonText: 'Yes, approve it',
+                      cancelButtonText: 'Cancel'
+                    })
+                    if (result.isConfirmed) {
+                      submitAction(postJson(`/api/production-requests/${request.id}/approve`, { approved: true, approval_remarks: approvalRemarks[request.id] }), 'RM issue approved')
+                    }
+                  }}
                 >
                   {request.status === 'PENDING_QC' ? (
                     <>⏳ Waiting for QC</>
@@ -2205,7 +2300,17 @@ function Production({
                   step="1"
                   type="number"
                   value={runForm.quantity_produced}
-                  onChange={(event) => setRunForm({ ...runForm, quantity_produced: event.target.value })}
+                  onChange={(event) => {
+                    const val = event.target.value
+                    const numVal = Number(val)
+                    const req = approved.find((r) => r.id === Number(runForm.request_id))
+                    let rejected = runForm.rejected_pieces
+                    if (req && !isNaN(numVal) && val !== '') {
+                      const diff = Math.max(0, req.requested_qty - numVal)
+                      rejected = String(Math.floor(diff))
+                    }
+                    setRunForm({ ...runForm, quantity_produced: val, rejected_pieces: rejected })
+                  }}
                   required
                 />
               </label>

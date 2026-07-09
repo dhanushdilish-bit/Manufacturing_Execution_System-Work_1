@@ -59,10 +59,9 @@ function testCreateRun(db, body, userId) {
     return String(value || 'NA').toUpperCase().replace(/[^A-Z0-9]+/g, '').slice(0, 12) || 'NA'
   }
   function generateBatchCode(db, productCode, shift, startedAt, productId) {
-    const dateCode = formatDateCode(startedAt)
-    const productSegment = segment(productCode)
-    const shiftSegment = segment(shift)
-    const prefix = `BATCH-${dateCode}-${productSegment}-${shiftSegment}-`
+  const dateCode = formatDateCode(startedAt)
+  const shiftSegment = segment(shift)
+  const prefix = `TP-${dateCode}-${shiftSegment}-`
     let sequence = db.prepare(`
       SELECT COUNT(*) AS count
       FROM production_runs

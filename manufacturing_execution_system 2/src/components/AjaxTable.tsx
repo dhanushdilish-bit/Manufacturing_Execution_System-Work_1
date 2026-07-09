@@ -12,9 +12,10 @@ import './AjaxTable.css'
 type AjaxTableProps<T> = {
   resource: string
   columns: ColumnDef<T, any>[]
+  refreshKey?: number
 }
 
-export function AjaxTable<T>({ resource, columns }: AjaxTableProps<T>) {
+export function AjaxTable<T>({ resource, columns, refreshKey }: AjaxTableProps<T>) {
   const [data, setData] = useState<T[]>([])
   const [loading, setLoading] = useState(true)
   const [page, setPage] = useState(1)
@@ -22,6 +23,14 @@ export function AjaxTable<T>({ resource, columns }: AjaxTableProps<T>) {
   const [totalRows, setTotalRows] = useState(0)
   const [search, setSearch] = useState('')
   const [debouncedSearch, setDebouncedSearch] = useState('')
+
+  const [localRefreshKey, setLocalRefreshKey] = useState(0)
+
+  useEffect(() => {
+    const handler = () => setLocalRefreshKey(k => k + 1)
+    window.addEventListener('mes-data-changed', handler)
+    return () => window.removeEventListener('mes-data-changed', handler)
+  }, [])
 
   useEffect(() => {
     const handler = setTimeout(() => {
@@ -52,7 +61,7 @@ export function AjaxTable<T>({ resource, columns }: AjaxTableProps<T>) {
     return () => {
       active = false
     }
-  }, [resource, page, debouncedSearch])
+  }, [resource, page, debouncedSearch, refreshKey, localRefreshKey])
 
   const table = useReactTable({
     data,

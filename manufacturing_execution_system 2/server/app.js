@@ -1273,9 +1273,8 @@ function calculateMinutes(startedAt, endedAt) {
 
 function generateBatchCode(db, productCode, shift, startedAt, productId) {
   const dateCode = formatDateCode(startedAt)
-  const productSegment = segment(productCode)
   const shiftSegment = segment(shift)
-  const prefix = `BATCH-${dateCode}-${productSegment}-${shiftSegment}-`
+  const prefix = `TP-${dateCode}-${shiftSegment}-`
 
   let sequence = db.prepare(`
     SELECT COUNT(*) AS count
