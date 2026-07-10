@@ -239,10 +239,20 @@ export function createSchema(db) {
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
+    CREATE TABLE IF NOT EXISTS daystore_inventory (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      receipt_id INTEGER NOT NULL REFERENCES rm_receipts(id),
+      material_id INTEGER NOT NULL REFERENCES raw_materials(id),
+      quantity REAL NOT NULL CHECK (quantity > 0),
+      moved_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      moved_by INTEGER REFERENCES users(id)
+    );
+
     CREATE TABLE IF NOT EXISTS production_consumption (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       run_id INTEGER NOT NULL REFERENCES production_runs(id) ON DELETE CASCADE,
-      allocation_id INTEGER NOT NULL REFERENCES rm_issue_allocations(id),
+      allocation_id INTEGER REFERENCES rm_issue_allocations(id),
+      daystore_inventory_id INTEGER REFERENCES daystore_inventory(id),
       receipt_id INTEGER NOT NULL REFERENCES rm_receipts(id),
       material_id INTEGER NOT NULL REFERENCES raw_materials(id),
       planned_qty REAL NOT NULL,
@@ -319,10 +329,11 @@ export function createSchema(db) {
   ensureUserColumns(db)
   ensureProductionPlanningColumns(db)
   ensureProductionRunLoggingColumns(db)
+  ensureNewColumns(db)
   ensureQcTemplatesScope(db)
   ensureProductionRequestsStatus(db)
-  ensureNewColumns(db)
-  ensureRmReceiptColumns(db)
+  ensureMachineNoColumn(db)
+  ensureDaystoreTables(db)
 
   db.prepare(`
     INSERT INTO schema_meta (key, value)
@@ -454,6 +465,49 @@ function ensureProductionRequestsStatus(db) {
     `)
     db.exec('DROP TABLE production_requests')
     db.exec('ALTER TABLE production_requests_new RENAME TO production_requests')
+    db.exec('COMMIT')
+    db.exec('PRAGMA foreign_keys = ON')
+  }
+}
+
+function ensureMachineNoColumn(db) {
+  const columns = new Set(db.prepare('PRAGMA table_info(production_runs)').all().map(c => c.name));
+  if (!columns.has('machine_no')) {
+    db.exec('ALTER TABLE production_runs ADD COLUMN machine_no TEXT');
+  }
+}
+
+function ensureDaystoreTables(db) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS daystore_inventory (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      receipt_id INTEGER NOT NULL REFERENCES rm_receipts(id),
+      material_id INTEGER NOT NULL REFERENCES raw_materials(id),
+      quantity REAL NOT NULL CHECK (quantity > 0),
+      moved_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      moved_by INTEGER REFERENCES users(id)
+    )
+  `)
+
+  const tableInfo = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='production_consumption'").get()
+  if (tableInfo && tableInfo.sql.includes('allocation_id INTEGER NOT NULL')) {
+    db.exec('PRAGMA foreign_keys = OFF')
+    db.exec('BEGIN')
+    db.exec(`
+      CREATE TABLE production_consumption_new (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        run_id INTEGER NOT NULL REFERENCES production_runs(id) ON DELETE CASCADE,
+        allocation_id INTEGER REFERENCES rm_issue_allocations(id),
+        daystore_inventory_id INTEGER REFERENCES daystore_inventory(id),
+        receipt_id INTEGER NOT NULL REFERENCES rm_receipts(id),
+        material_id INTEGER NOT NULL REFERENCES raw_materials(id),
+        planned_qty REAL NOT NULL,
+        actual_qty REAL NOT NULL CHECK (actual_qty >= 0)
+      )
+    `)
+    db.exec('INSERT INTO production_consumption_new (id, run_id, allocation_id, receipt_id, material_id, planned_qty, actual_qty) SELECT id, run_id, allocation_id, receipt_id, material_id, planned_qty, actual_qty FROM production_consumption')
+    db.exec('DROP TABLE production_consumption')
+    db.exec('ALTER TABLE production_consumption_new RENAME TO production_consumption')
     db.exec('COMMIT')
     db.exec('PRAGMA foreign_keys = ON')
   }

@@ -274,6 +274,20 @@ export type WorkflowData = {
   productionRuns: ProductionRun[]
   fgBatches: FgBatch[]
   dispatches: Dispatch[]
+  daystoreAvailableRm: (RmReceipt & { available_qty: number })[]
+  daystoreInventory: DaystoreInventoryItem[]
+}
+
+export type DaystoreInventoryItem = {
+  receipt_id: number
+  material_id: number
+  material_code: string
+  material_name: string
+  unit_code: string
+  lot_number: string
+  supplier: string
+  total_transferred: number
+  available_qty: number
 }
 
 export type DashboardSummary = {

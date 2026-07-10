@@ -135,6 +135,19 @@ export function createApp(db = initDatabase()) {
     res.json(receipt)
   })
 
+  app.get('/api/daystore/available-rm', requireUser(db), (req, res) => {
+    res.json(getDaystoreAvailableRm(db))
+  })
+
+  app.get('/api/daystore/inventory', requireUser(db), (req, res) => {
+    res.json(getDaystoreInventory(db))
+  })
+
+  app.post('/api/daystore/transfer', requireUser(db), requireRoles('admin', 'manager', 'rm_store'), (req, res) => {
+    const transfer = transferToDaystore(db, req.body ?? {}, req.user.id)
+    res.status(201).json(transfer)
+  })
+
   app.post('/api/production-targets', requireUser(db), requireRoles('admin', 'manager'), (req, res) => {
     const target = createProductionTarget(db, req.body ?? {}, req.user.id)
     res.status(201).json(target)
@@ -549,6 +562,8 @@ function getWorkflow(db) {
       LEFT JOIN users dispatcher ON dispatcher.id = d.dispatched_by
       ORDER BY d.id DESC
     `).all(),
+    daystoreAvailableRm: getDaystoreAvailableRm(db),
+    daystoreInventory: getDaystoreInventory(db)
   }
 }
 
@@ -1519,4 +1534,60 @@ function getTraceability(db, batchCode) {
   `).all(batch.id)
 
   return { batch, rawMaterials, fgQc, dispatches }
+}
+
+function getDaystoreAvailableRm(db) {
+  return db.prepare(`
+    SELECT 
+      rr.*, 
+      rm.code as material_code, 
+      rm.name as material_name, 
+      u.code as unit_code,
+      rr.accepted_qty - IFNULL((SELECT SUM(quantity) FROM rm_issue_allocations WHERE receipt_id = rr.id), 0) - IFNULL((SELECT SUM(quantity) FROM daystore_inventory WHERE receipt_id = rr.id), 0) as available_qty
+    FROM rm_receipts rr
+    JOIN raw_materials rm ON rm.id = rr.material_id
+    JOIN units u ON u.id = rm.unit_id
+    WHERE rr.status = 'APPROVED'
+  `).all().filter(r => r.available_qty > 0)
+}
+
+function getDaystoreInventory(db) {
+  return db.prepare(`
+    SELECT 
+      di.receipt_id,
+      di.material_id,
+      rm.code as material_code,
+      rm.name as material_name,
+      u.code as unit_code,
+      rr.lot_number,
+      rr.supplier,
+      SUM(di.quantity) as total_transferred,
+      SUM(di.quantity) - IFNULL((SELECT SUM(actual_qty) FROM production_consumption WHERE receipt_id = di.receipt_id AND daystore_inventory_id IS NOT NULL), 0) as available_qty
+    FROM daystore_inventory di
+    JOIN raw_materials rm ON rm.id = di.material_id
+    JOIN units u ON u.id = rm.unit_id
+    JOIN rm_receipts rr ON rr.id = di.receipt_id
+    GROUP BY di.receipt_id, di.material_id, rm.code, rm.name, u.code, rr.lot_number, rr.supplier
+  `).all().filter(r => r.available_qty > 0)
+}
+
+function transferToDaystore(db, body, userId) {
+  if (!body.receipt_id || !body.quantity) throw httpError(400, 'Receipt ID and quantity are required')
+  return inTransaction(db, () => {
+    const receipt = db.prepare('SELECT * FROM rm_receipts WHERE id = ?').get(body.receipt_id)
+    if (!receipt || receipt.status !== 'APPROVED') throw httpError(400, 'Invalid receipt or not approved')
+    
+    const allocated = db.prepare('SELECT SUM(quantity) as total FROM rm_issue_allocations WHERE receipt_id = ?').get(body.receipt_id).total || 0
+    const transferred = db.prepare('SELECT SUM(quantity) as total FROM daystore_inventory WHERE receipt_id = ?').get(body.receipt_id).total || 0
+    
+    const available = receipt.accepted_qty - allocated - transferred
+    if (body.quantity > available) throw httpError(400, 'Transfer quantity exceeds available quantity')
+    
+    const info = db.prepare(`
+      INSERT INTO daystore_inventory (receipt_id, material_id, quantity, moved_by)
+      VALUES (?, ?, ?, ?)
+    `).run(body.receipt_id, receipt.material_id, body.quantity, userId)
+    
+    return { id: info.lastInsertRowid, receipt_id: body.receipt_id, quantity: body.quantity }
+  })
 }

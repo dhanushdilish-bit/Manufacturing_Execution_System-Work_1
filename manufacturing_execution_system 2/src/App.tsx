@@ -1,5 +1,6 @@
 import {
   Activity,
+  ArrowRight,
   Boxes,
   CheckCircle2,
   ClipboardCheck,
@@ -74,6 +75,8 @@ const emptyWorkflow: WorkflowData = {
   productionRuns: [],
   fgBatches: [],
   dispatches: [],
+  daystoreAvailableRm: [],
+  daystoreInventory: [],
 }
 
 const emptySummary: DashboardSummary = {
@@ -652,6 +655,9 @@ function App() {
             onPrintRequest={(req) => { setPrintingRequest(req); setTimeout(() => { window.print(); setTimeout(() => setPrintingRequest(null), 100) }, 100) }}
             productionRequests={workflow.productionRequests}
             rmIssues={workflow.rmIssues}
+            availableRm={workflow.daystoreAvailableRm}
+            inventory={workflow.daystoreInventory}
+            submitAction={submitAction}
           />
         )}
         {activeTab === 'fg' && (
@@ -2454,46 +2460,55 @@ function Production({
 
           {runForm.request_id && (
             <fieldset style={{ padding: '1rem', border: '1px solid var(--border)', borderRadius: '8px' }}>
-              <legend style={{ padding: '0 0.5rem', fontWeight: 'bold' }}>Raw Materials Used</legend>
+              <legend style={{ padding: '0 0.5rem', fontWeight: 'bold' }}>Raw Materials Used (From Daystore)</legend>
               <table style={{ margin: 0 }}>
                 <thead>
                   <tr>
                     <th>Material</th>
-                    <th>Approved Qty</th>
+                    <th>Available in Daystore</th>
                     <th>Actual Used</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {workflow.rmIssues
-                    .filter((issue) => issue.request_id === Number(runForm.request_id) && issue.status === 'APPROVED')
-                    .flatMap(issue => workflow.rmIssueAllocations.filter(a => (a as any).issue_id === issue.id))
-                    .map(alloc => (
-                      <tr key={(alloc as any).id}>
-                        <td>{(alloc as any).material_code} - {(alloc as any).material_name} (Lot #{(alloc as any).lot_number})</td>
-                        <td>{fmtQty((alloc as any).quantity)}</td>
+                  {(() => {
+                    const req = approved.find((r) => r.id === Number(runForm.request_id));
+                    const bomMaterialIds = req 
+                      ? bootstrap.bomItems.filter(b => b.product_id === req.product_id).map(b => b.raw_material_id)
+                      : [];
+                    const relevantInventory = workflow.daystoreInventory.filter(inv => bomMaterialIds.includes(inv.material_id));
+                    
+                    if (relevantInventory.length === 0) {
+                      return <tr><td colSpan={3} className="empty">No required materials available in Daystore</td></tr>;
+                    }
+
+                    return relevantInventory.map(inv => (
+                      <tr key={inv.receipt_id}>
+                        <td>{inv.material_code} - {inv.material_name} (Lot #{inv.lot_number})</td>
+                        <td>{fmtQty(inv.available_qty)} {inv.unit_code}</td>
                         <td>
                           <input
                             type="number"
                             min="0"
                             step="0.001"
-                            max={(alloc as any).quantity}
-                            value={runForm.consumption[(alloc as any).id] ?? (alloc as any).quantity}
+                            max={inv.available_qty}
+                            value={runForm.consumption[inv.receipt_id] ?? ''}
                             onChange={(e) => setRunForm({
                               ...runForm,
                               consumption: {
                                 ...runForm.consumption,
-                                [(alloc as any).id]: e.target.value
+                                [inv.receipt_id]: e.target.value
                               }
                             })}
                             style={{ width: '120px' }}
-                            required
+                            placeholder={`Max: ${fmtQty(inv.available_qty)}`}
                           />
                         </td>
                       </tr>
-                    ))}
+                    ));
+                  })()}
                 </tbody>
               </table>
-              <small style={{ color: 'var(--text-muted)' }}>* By default, exact approved quantities are assumed consumed unless adjusted down.</small>
+              <small style={{ color: 'var(--text-muted)' }}>* Enter the exact quantities consumed from Daystore inventory.</small>
             </fieldset>
           )}
 
@@ -2524,15 +2539,80 @@ function DayStore({
   onPrintRequest,
   productionRequests,
   rmIssues,
+  availableRm,
+  inventory,
+  submitAction,
 }: {
   onPrintRequest: (request: ProductionRequest) => void
   productionRequests: ProductionRequest[]
   rmIssues: WorkflowData['rmIssues']
+  availableRm: WorkflowData['daystoreAvailableRm']
+  inventory: WorkflowData['daystoreInventory']
+  submitAction: <T>(action: Promise<T>, message: string) => Promise<boolean>
 }) {
   const rmStaging = productionRequests.filter((req) => req.status === 'RM_APPROVED')
 
   return (
     <div className="grid-two">
+      <section className="panel">
+        <PanelTitle icon={Boxes} title="Available RM Inventory" />
+        <div className="queue-list">
+          {availableRm.length === 0 && <div className="empty">No approved RM available</div>}
+          {availableRm.map((rm) => (
+            <article className="queue-item" key={rm.id}>
+              <div className="queue-heading">
+                <strong>{rm.material_code} / {rm.lot_number}</strong>
+                <StatusBadge status={rm.status} />
+              </div>
+              <span>Available: {fmtQty(rm.available_qty)} {rm.unit_code} from {rm.supplier}</span>
+              <div className="button-row" style={{ marginTop: '0.5rem' }}>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const result = await Swal.fire({
+                      title: 'Transfer to Daystore',
+                      text: `Enter quantity to transfer (max ${fmtQty(rm.available_qty)} ${rm.unit_code})`,
+                      input: 'number',
+                      inputAttributes: {
+                        min: '0.001',
+                        max: String(rm.available_qty),
+                        step: 'any'
+                      },
+                      showCancelButton: true,
+                      confirmButtonText: 'Transfer',
+                    })
+                    if (result.isConfirmed && result.value) {
+                      submitAction(
+                        postJson('/api/daystore/transfer', { receipt_id: rm.id, quantity: Number(result.value) }),
+                        'Transferred to Daystore'
+                      )
+                    }
+                  }}
+                >
+                  <ArrowRight size={16} />
+                  Move to Daystore
+                </button>
+              </div>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section className="panel">
+        <PanelTitle icon={PackageCheck} title="Current Daystore Inventory" />
+        <div className="queue-list">
+          {inventory.length === 0 && <div className="empty">No items in Daystore</div>}
+          {inventory.map((inv) => (
+            <article className="queue-item" key={`${inv.receipt_id}-${inv.material_id}`}>
+              <div className="queue-heading">
+                <strong>{inv.material_code} / {inv.lot_number}</strong>
+              </div>
+              <span>Available: {fmtQty(inv.available_qty)} {inv.unit_code} (Total Transferred: {fmtQty(inv.total_transferred)})</span>
+            </article>
+          ))}
+        </div>
+      </section>
+
       <section className="panel">
         <PanelTitle icon={Boxes} title="RM Staging (Temporary Store)" />
         <div className="queue-list">
