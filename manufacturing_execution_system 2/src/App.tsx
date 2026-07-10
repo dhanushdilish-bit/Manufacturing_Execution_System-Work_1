@@ -131,6 +131,26 @@ const dispatchColumns = [
       }
       return <span style={{ fontSize: '0.85em', color: 'var(--text-muted)' }}>{d.vehicle_no} ({d.driver_name}, {d.driver_phone})</span>
     }
+  }),
+  dispatchHelper.display({
+    id: 'actions',
+    header: '',
+    cell: (info) => (
+      <div style={{ display: 'flex', gap: '8px' }}>
+        <button 
+          className="text-button" 
+          onClick={() => window.dispatchEvent(new CustomEvent('print-carton-slip', { detail: info.row.original }))}
+        >
+          Carton Slip
+        </button>
+        <button 
+          className="text-button" 
+          onClick={() => window.dispatchEvent(new CustomEvent('print-address-slip', { detail: info.row.original }))}
+        >
+          Address Slip
+        </button>
+      </div>
+    )
   })
 ]
 
@@ -156,6 +176,26 @@ const batchColumns = [
     header: 'Location',
     cell: (info) => info.getValue() || '-',
   }),
+  batchHelper.display({
+    id: 'actions',
+    header: '',
+    cell: (info) => (
+      <div style={{ display: 'flex', gap: '8px' }}>
+        <button 
+          className="text-button" 
+          onClick={() => window.dispatchEvent(new CustomEvent('print-log-sheet', { detail: info.row.original }))}
+        >
+          Log Sheet
+        </button>
+        <button 
+          className="text-button" 
+          onClick={() => window.dispatchEvent(new CustomEvent('print-cover-slip', { detail: info.row.original }))}
+        >
+          Cover Slip
+        </button>
+      </div>
+    )
+  })
 ]
 
 const runHelper = createColumnHelper<ProductionRun>()
@@ -200,6 +240,10 @@ function App() {
   const [loading, setLoading] = useState(false)
   const [notice, setNotice] = useState<Notice>(null)
   const [printingRequest, setPrintingRequest] = useState<ProductionRequest | null>(null)
+  const [printingLogSheet, setPrintingLogSheet] = useState<FgBatch | null>(null)
+  const [printingCoverSlip, setPrintingCoverSlip] = useState<FgBatch | null>(null)
+  const [printingCartonSlip, setPrintingCartonSlip] = useState<Dispatch | null>(null)
+  const [printingAddressSlip, setPrintingAddressSlip] = useState<Dispatch | null>(null)
   const [traceQuery, setTraceQuery] = useState('')
   const [trace, setTrace] = useState<TraceabilityResult | null>(null)
   const [rmQcDrafts, setRmQcDrafts] = useState<Record<number, QcDraft>>({})
@@ -262,6 +306,7 @@ function App() {
   const [runForm, setRunForm] = useState<Record<string, any>>({
     request_id: '',
     emp_code: '',
+    machine_no: '',
     shift: 'A',
     started_at: toLocalInputValue(new Date()),
     ended_at: '',
@@ -322,6 +367,33 @@ function App() {
         return loadData()
       })
       .catch(() => localStorage.removeItem('mes-token'))
+  }, [])
+
+  useEffect(() => {
+    const handlePrint = (setter: any, data: any) => {
+      setter(data)
+      setTimeout(() => {
+        window.print()
+        setTimeout(() => setter(null), 100)
+      }, 100)
+    }
+
+    const onPrintLogSheet = (e: any) => handlePrint(setPrintingLogSheet, e.detail)
+    const onPrintCoverSlip = (e: any) => handlePrint(setPrintingCoverSlip, e.detail)
+    const onPrintCartonSlip = (e: any) => handlePrint(setPrintingCartonSlip, e.detail)
+    const onPrintAddressSlip = (e: any) => handlePrint(setPrintingAddressSlip, e.detail)
+
+    window.addEventListener('print-log-sheet', onPrintLogSheet)
+    window.addEventListener('print-cover-slip', onPrintCoverSlip)
+    window.addEventListener('print-carton-slip', onPrintCartonSlip)
+    window.addEventListener('print-address-slip', onPrintAddressSlip)
+
+    return () => {
+      window.removeEventListener('print-log-sheet', onPrintLogSheet)
+      window.removeEventListener('print-cover-slip', onPrintCoverSlip)
+      window.removeEventListener('print-carton-slip', onPrintCartonSlip)
+      window.removeEventListener('print-address-slip', onPrintAddressSlip)
+    }
   }, [])
 
   async function loadData() {
@@ -627,6 +699,10 @@ function App() {
         )}
       </section>
       {printingRequest && <PrintTicket request={printingRequest} issues={workflow.rmIssues} />}
+      {printingLogSheet && <PrintLogSheet batch={printingLogSheet} />}
+      {printingCoverSlip && <PrintCoverSlip batch={printingCoverSlip} />}
+      {printingCartonSlip && <PrintCartonSlip dispatch={printingCartonSlip} />}
+      {printingAddressSlip && <PrintAddressSlip dispatch={printingAddressSlip} />}
     </main>
   )
 }
@@ -1156,10 +1232,17 @@ function QcDashboard({
                         alert('Remarks are required when rejecting.')
                         return
                       }
+                      
+                      const accepted = rmQcQuantities[receipt.id]?.accepted ?? receipt.quantity
+                      const rejected = rmQcQuantities[receipt.id]?.rejected ?? 0
+                      
                       submitAction(
                         postJson(`/api/rm-receipts/${receipt.id}/qc`, {
                           passed: false,
+                          disposition: 'PENDING_QC2', // Explicitly indicate intent to rework
                           qc_remarks: rmQcRemarks[receipt.id],
+                          accepted_qty: accepted,
+                          rejected_qty: rejected,
                           results: getResults(visibleParameters, rmDrafts[receipt.id]),
                         }),
                         'RM lot rejected',
@@ -1481,7 +1564,11 @@ function QaDashboard({
                       return
                     }
                     submitAction(
-                      postJson(`/api/rm-receipts/${receipt.id}/qa`, { passed: false, qa_remarks: rmQaRemarks[receipt.id] }),
+                      postJson(`/api/rm-receipts/${receipt.id}/qa`, { 
+                        passed: false, 
+                        disposition: 'PENDING_QC2',
+                        qa_remarks: rmQaRemarks[receipt.id] 
+                      }),
                       'RM lot QA rejected',
                     )
                   }}
@@ -2252,6 +2339,14 @@ function Production({
                     </option>
                   ))}
                 </datalist>
+              </label>
+              <label>
+                Machine NO
+                <input 
+                  value={runForm.machine_no} 
+                  onChange={(e) => setRunForm({ ...runForm, machine_no: e.target.value })} 
+                  placeholder="e.g. M1-02"
+                />
               </label>
               <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
                 {operator ? (
@@ -3334,13 +3429,13 @@ function MasterData({
               label="Product"
               value={form.product_id}
               onChange={(value) => setForm({ ...form, product_id: value })}
-              options={bootstrap.products.map((product) => [String(product.id), product.code])}
+              options={bootstrap.products.map((product) => [String(product.id), product.name])}
             />
             <SelectInput
               label="Material"
               value={form.raw_material_id}
               onChange={(value) => setForm({ ...form, raw_material_id: value })}
-              options={bootstrap.rawMaterials.map((material) => [String(material.id), material.code])}
+              options={bootstrap.rawMaterials.map((material) => [String(material.id), material.name])}
             />
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
               <TextInput
@@ -3577,6 +3672,7 @@ function BatchTable({ batches }: { batches: FgBatch[] }) {
           <th>Qty</th>
           <th>Remaining</th>
           <th>Status</th>
+          <th>Actions</th>
         </tr>
       </thead>
       <tbody>
@@ -3587,6 +3683,22 @@ function BatchTable({ batches }: { batches: FgBatch[] }) {
             <td>{fmtQty(batch.quantity)} {batch.unit_code}</td>
             <td>{fmtQty(batch.remaining_qty)} {batch.unit_code}</td>
             <td><StatusBadge status={batch.status} /></td>
+            <td>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <button 
+                  className="text-button" 
+                  onClick={() => window.dispatchEvent(new CustomEvent('print-log-sheet', { detail: batch }))}
+                >
+                  Log Sheet
+                </button>
+                <button 
+                  className="text-button" 
+                  onClick={() => window.dispatchEvent(new CustomEvent('print-cover-slip', { detail: batch }))}
+                >
+                  Cover Slip
+                </button>
+              </div>
+            </td>
           </tr>
         ))}
       </tbody>
@@ -4062,6 +4174,130 @@ function RoleManagement({
           </tbody>
         </table>
       </section>
+    </div>
+  )
+}
+
+function PrintLogSheet({ batch }: { batch: any }) {
+  const [date, time] = (batch.started_at || '').split('T')
+  return (
+    <div className="print-container">
+      <div className="print-log-sheet">
+        <div className="logo-area">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />
+          </svg>
+          MOTHERS INDUSTRIES
+        </div>
+        <h1>Log sheet</h1>
+        
+        <div className="meta">
+          <div className="meta-row">
+            <div className="meta-label">Date :</div>
+            <div>{date}</div>
+          </div>
+          <div className="meta-row">
+            <div className="meta-label">Item :</div>
+            <div>{batch.product_code} {batch.product_name}</div>
+          </div>
+          <div className="meta-row">
+            <div className="meta-label">Employee Name :</div>
+            <div>{batch.operator_name || '-'}</div>
+          </div>
+          <div className="meta-row">
+            <div className="meta-label">Machine NO :</div>
+            <div>{batch.machine_no || '-'}</div>
+          </div>
+          <div className="meta-row">
+            <div className="meta-label">Shift :</div>
+            <div>{batch.shift || '-'}</div>
+          </div>
+        </div>
+
+        <table>
+          <thead>
+            <tr>
+              <th>Production</th>
+              <th>Tested</th>
+              <th>Accepted</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>{batch.quantity_produced || '-'}</td>
+              <td>{batch.rejected_pieces || '-'}</td>
+              <td>{batch.quantity || '-'}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+}
+
+function PrintCoverSlip({ batch }: { batch: any }) {
+  return (
+    <div className="print-container">
+      <div className="print-sticker-slip">
+        <div className="stamp-area">QA</div>
+        <div className="item-code">{batch.product_code}</div>
+        <div className="meta-row">
+          <div className="meta-label">BATCH NO:</div>
+          <div>{batch.batch_code}</div>
+        </div>
+        <div className="meta-row">
+          <div className="meta-label">QTY:</div>
+          <div>{batch.quantity}</div>
+        </div>
+        <div className="box-bottom">
+          <div style={{ color: '#22c55e', fontSize: '10px' }}>[Green Color Stamp Area]</div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function PrintCartonSlip({ dispatch }: { dispatch: any }) {
+  return (
+    <div className="print-container">
+      <div className="print-sticker-slip">
+        <div className="item-code">{dispatch.product_code}</div>
+        <div className="meta-row">
+          <div className="meta-label">Batch Nos:</div>
+          <div>{dispatch.batch_code}</div>
+        </div>
+        <div className="meta-row">
+          <div className="meta-label">QTY:</div>
+          <div>{dispatch.quantity}</div>
+        </div>
+        <div className="meta-row">
+          <div className="meta-label">P.O. No.:</div>
+          <div>{dispatch.order_ref}</div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function PrintAddressSlip({ dispatch }: { dispatch: any }) {
+  return (
+    <div className="print-container">
+      <div className="print-sticker-address">
+        <div className="box">
+          <h3>FROM:</h3>
+          <p>
+            MOTHERS INDUSTRIES<br/>
+            (Full Address)<br/>
+            Thiruvananthapuram, Kerala
+          </p>
+        </div>
+        <div className="box" style={{ marginTop: '30px' }}>
+          <h3>TO:</h3>
+          <p style={{ fontSize: '16px', whiteSpace: 'pre-wrap' }}>
+            {dispatch.customer}
+          </p>
+        </div>
+      </div>
     </div>
   )
 }

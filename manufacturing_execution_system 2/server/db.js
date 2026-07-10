@@ -224,6 +224,7 @@ export function createSchema(db) {
       quantity_produced REAL NOT NULL CHECK (quantity_produced > 0),
       shift TEXT NOT NULL,
       operator_id INTEGER REFERENCES employees(id),
+      machine_no TEXT,
       runner_waste_kg REAL NOT NULL DEFAULT 0,
       purge_waste_kg REAL NOT NULL DEFAULT 0,
       rejected_pieces INTEGER NOT NULL DEFAULT 0,

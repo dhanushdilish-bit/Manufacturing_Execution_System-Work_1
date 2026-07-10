@@ -287,11 +287,15 @@ export function createApp(db = initDatabase()) {
           baseSql = `
             SELECT fb.*, p.code AS product_code, p.name AS product_name, u.code AS unit_code,
                    qc.name AS qc_by_name,
+                   prun.started_at, prun.shift, prun.machine_no, prun.quantity_produced, prun.rejected_pieces,
+                   emp.name AS operator_name, emp.emp_code AS operator_code,
                    COALESCE((SELECT SUM(quantity) FROM dispatches WHERE batch_id = fb.id), 0) AS dispatched_qty,
                    fb.quantity - COALESCE((SELECT SUM(quantity) FROM dispatches WHERE batch_id = fb.id), 0) AS remaining_qty
             FROM fg_batches fb
             JOIN products p ON p.id = fb.product_id
             JOIN units u ON u.id = p.unit_id
+            LEFT JOIN production_runs prun ON prun.id = fb.production_run_id
+            LEFT JOIN employees emp ON emp.id = prun.operator_id
             LEFT JOIN users qc ON qc.id = fb.qc_by
           `
           countSql = `
@@ -953,7 +957,7 @@ function qaRmReceipt(db, receiptId, body, userId) {
     const failedStatus = body.disposition === 'HOLD' ? 'HOLD' : 'PENDING_QC2'
     db.prepare(`
       UPDATE rm_receipts
-      SET status = ?, qa_by = ?, qa_at = ?, qc_remarks = ?
+      SET status = ?, qa_by = ?, qa_at = ?, remarks = ?
       WHERE id = ?
     `).run(passed ? 'APPROVED' : failedStatus, userId, nowIso(), body.qa_remarks || null, receiptId)
     return getRmReceipt(db, receiptId)
@@ -1169,6 +1173,7 @@ function createProductionRun(db, body, userId) {
   const requestId = Number(body.request_id)
   const quantityProduced = mustNumber(body.quantity_produced, 'Produced quantity')
   const shift = String(body.shift || '').trim()
+  const machineNo = String(body.machine_no || '').trim()
   const teamMembers = String(body.team_members || '').trim()
   const empCode = String(body.emp_code || '').trim()
   
@@ -1214,14 +1219,15 @@ function createProductionRun(db, body, userId) {
   return inTransaction(db, () => {
     const runId = db.prepare(`
       INSERT INTO production_runs
-        (request_id, product_id, quantity_produced, shift, operator_id, runner_waste_kg, purge_waste_kg, rejected_pieces, testing_sample_qty, team_members, started_at, ended_at, run_minutes, batch_code, remarks, created_by)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (request_id, product_id, quantity_produced, shift, operator_id, machine_no, runner_waste_kg, purge_waste_kg, rejected_pieces, testing_sample_qty, team_members, started_at, ended_at, run_minutes, batch_code, remarks, created_by)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       requestId,
       request.product_id,
       quantityProduced,
       shift,
       operatorId,
+      machineNo || null,
       runnerWaste,
       purgeWaste,
       rejectedPieces,
