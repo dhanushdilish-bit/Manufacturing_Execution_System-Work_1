@@ -2561,7 +2561,7 @@ function DayStore({
           {availableRm.map((rm) => (
             <article className="queue-item" key={rm.id}>
               <div className="queue-heading">
-                <strong>{rm.material_code} / {rm.lot_number}</strong>
+                <strong>{rm.material_code} - {rm.material_name} / {rm.lot_number}</strong>
                 <StatusBadge status={rm.status} />
               </div>
               <span>Available: {fmtQty(rm.available_qty)} {rm.unit_code} from {rm.supplier}</span>
@@ -2605,7 +2605,7 @@ function DayStore({
           {inventory.map((inv) => (
             <article className="queue-item" key={`${inv.receipt_id}-${inv.material_id}`}>
               <div className="queue-heading">
-                <strong>{inv.material_code} / {inv.lot_number}</strong>
+                <strong>{inv.material_code} - {inv.material_name} / {inv.lot_number}</strong>
               </div>
               <span>Available: {fmtQty(inv.available_qty)} {inv.unit_code} (Total Transferred: {fmtQty(inv.total_transferred)})</span>
             </article>
