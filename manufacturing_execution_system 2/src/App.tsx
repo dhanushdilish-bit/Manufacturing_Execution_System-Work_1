@@ -1891,7 +1891,30 @@ function Production({
               Product
               <select
                 value={targetForm.product_id}
-                onChange={(event) => setTargetForm({ ...targetForm, product_id: event.target.value })}
+                onChange={(event) => {
+                  const val = event.target.value
+                  setTargetForm({ ...targetForm, product_id: val })
+                  if (val) {
+                    const productId = Number(val)
+                    const requiredBomItems = bootstrap.bomItems.filter(b => b.product_id === productId)
+                    const missingMaterials = requiredBomItems.filter(bom => {
+                      return !workflow.daystoreInventory.some(inv => inv.material_id === bom.raw_material_id)
+                    })
+                    
+                    if (missingMaterials.length > 0) {
+                      const missingNames = missingMaterials.map(bom => {
+                        const mat = bootstrap.rawMaterials.find(m => m.id === bom.raw_material_id)
+                        return mat ? mat.name : 'Unknown Material'
+                      }).join(', ')
+                      
+                      Swal.fire({
+                        title: 'Material Not in Daystore!',
+                        text: `${missingNames} is not in Current Daystore Inventory.`,
+                        icon: 'warning'
+                      })
+                    }
+                  }
+                }}
                 required
               >
                 <option value="">Select</option>
