@@ -1476,18 +1476,8 @@ function createDispatch(db, body, userId) {
           </div>
 
           <hr style="border: 0; border-top: 1px solid #e2e8f0; margin: 25px 0;" />
-          <h3 style="color: #475569; margin-bottom: 10px;">🔍 Production Traceability</h3>
-          <p style="font-size: 14px; color: #64748b; margin-top: 0;">For your quality assurance records, here is the verified traceability data for this batch:</p>
-          
-          <ul style="font-size: 14px; color: #334155; line-height: 1.6;">
-            <li><strong>Production Date:</strong> ${new Date(trace.batch.started_at).toLocaleDateString()}</li>
-            <li><strong>Quality Check (QC/QA) Passed:</strong> ${qcPassDate}</li>
-            <li><strong>Raw Materials Used:</strong>
-              <ul style="margin-top: 8px; color: #64748b;">
-                ${rmList}
-              </ul>
-            </li>
-          </ul>
+          <p style="font-size: 14px; color: #334155; margin-bottom: 15px;">For more details of the Batch, click the link below.</p>
+          <a href="http://127.0.0.1:5173/#/public-trace/${encodeURIComponent(batch.batch_code)}" style="display: inline-block; background: #0ea5e9; color: #fff; padding: 10px 20px; text-decoration: none; border-radius: 6px; font-weight: bold; margin-bottom: 10px;">Traceability</a>
           <hr style="border: 0; border-top: 1px solid #e2e8f0; margin: 25px 0;" />
 
           <p>We value your feedback. Please let us know how we did by clicking the link below:</p>
@@ -1526,11 +1516,13 @@ function getTraceability(db, batchCode) {
     SELECT fb.*, p.code AS product_code, p.name AS product_name, prun.shift, prun.team_members,
            prun.started_at, prun.ended_at, prun.run_minutes, prun.remarks AS run_remarks, 
            req.source_team, req.requested_qty, req.approved_at, req.remarks AS request_remarks, req.approval_remarks AS request_approval_remarks,
-           approver.name AS rm_approved_by_name, qc.name AS fg_qc_by_name, qa.name AS fg_qa_by_name
+           approver.name AS rm_approved_by_name, qc.name AS fg_qc_by_name, qa.name AS fg_qa_by_name,
+           emp.emp_code AS operator_code
     FROM fg_batches fb
     JOIN products p ON p.id = fb.product_id
     JOIN production_runs prun ON prun.id = fb.production_run_id
     JOIN production_requests req ON req.id = prun.request_id
+    LEFT JOIN employees emp ON emp.id = prun.operator_id
     LEFT JOIN users approver ON approver.id = req.approved_by
     LEFT JOIN users qc ON qc.id = fb.qc_by
     LEFT JOIN users qa ON qa.id = fb.qa_by

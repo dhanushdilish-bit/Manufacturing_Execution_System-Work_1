@@ -2882,9 +2882,11 @@ function Traceability({
             <div className="detail-grid">
               <Detail label="Product" value={`${trace.batch.product_code} - ${trace.batch.product_name}`} />
               <Detail label="Status" value={<StatusBadge status={trace.batch.status} />} />
+              <Detail label="Manufactured Date" value={new Date(trace.batch.started_at).toLocaleString()} />
               <Detail label="Produced" value={`${fmtQty(trace.batch.quantity)} units`} />
               <Detail label="Shift" value={trace.batch.shift} />
               <Detail label="Team" value={trace.batch.team_members} />
+              <Detail label="Employee Code" value={trace.batch.operator_code || '-'} />
               <Detail label="RM Approval" value={trace.batch.rm_approved_by_name || '-'} />
               <Detail label="FG QC" value={trace.batch.fg_qc_by_name || '-'} />
               <Detail label="FG QA" value={trace.batch.fg_qa_by_name || '-'} />
@@ -4038,28 +4040,49 @@ function PublicTraceability({ batchCode }: { batchCode: string }) {
             <PanelTitle icon={PackageCheck} title={trace.batch.batch_code} />
             <div className="detail-grid" style={{ gap: '1rem' }}>
               <Detail label="Product" value={`${trace.batch.product_code} - ${trace.batch.product_name}`} />
-              <Detail label="Produced Quantity" value={`${fmtQty(trace.batch.quantity)} units`} />
+              <Detail label="Status" value={<StatusBadge status={trace.batch.status} />} />
+              <Detail label="Manufactured Date" value={new Date(trace.batch.started_at).toLocaleString()} />
+              <Detail label="Produced" value={`${fmtQty(trace.batch.quantity)} units`} />
               <Detail label="Shift" value={trace.batch.shift} />
+              <Detail label="Team" value={trace.batch.team_members} />
+              <Detail label="Employee Code" value={trace.batch.operator_code || '-'} />
+              <Detail label="RM Approval" value={trace.batch.rm_approved_by_name || '-'} />
+              <Detail label="FG QC" value={trace.batch.fg_qc_by_name || '-'} />
+              <Detail label="FG QA" value={trace.batch.fg_qa_by_name || '-'} />
+              <Detail label="Source" value={trace.batch.source_team} />
+              {trace.batch.remarks && <Detail label="Run Remarks" value={trace.batch.remarks} />}
+              {trace.batch.qc_remarks && <Detail label="FG QC Remarks" value={trace.batch.qc_remarks} />}
+              {trace.batch.qa_remarks && <Detail label="FG QA Remarks" value={trace.batch.qa_remarks} />}
             </div>
           </section>
 
           <section className="panel" style={{ boxShadow: '0 4px 12px rgba(0,0,0,0.05)', border: '1px solid var(--border)' }}>
             <PanelTitle icon={Boxes} title="Raw Material Genealogy" />
             <div style={{ overflowX: 'auto' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.9em' }}>
+              <table>
                 <thead>
-                  <tr style={{ borderBottom: '2px solid var(--border)', textAlign: 'left' }}>
-                    <th style={{ padding: '0.75rem' }}>Material</th>
-                    <th style={{ padding: '0.75rem' }}>Lot</th>
-                    <th style={{ padding: '0.75rem' }}>Quantity Used</th>
+                  <tr>
+                    <th>Material</th>
+                    <th>Lot</th>
+                    <th>Supplier</th>
+                    <th>Received At</th>
+                    <th>Planned</th>
+                    <th>Actual</th>
+                    <th>RM QC</th>
+                    <th>Remarks</th>
                   </tr>
                 </thead>
                 <tbody>
                   {trace.rawMaterials.map((row, index) => (
-                    <tr key={index} style={{ borderBottom: '1px solid var(--border)' }}>
-                      <td style={{ padding: '0.75rem' }}>{row.material_code} - {row.material_name}</td>
-                      <td style={{ padding: '0.75rem' }}>{row.lot_number}</td>
-                      <td style={{ padding: '0.75rem' }}>{fmtQty(row.actual_qty)}</td>
+                    <tr key={`${row.receipt_id}-${index}`}>
+                      <td>{row.material_code} - {row.material_name}</td>
+                      <td>{row.lot_number}</td>
+                      <td>{row.supplier}</td>
+                      <td style={{ whiteSpace: 'nowrap' }}>{row.received_at ? new Date(row.received_at as string).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' }) : '-'}</td>
+                      <td>{fmtQty(row.planned_qty)}</td>
+                      <td>{fmtQty(row.actual_qty)}</td>
+                      <td>{row.rm_qc_by_name || '-'}</td>
+                      <td>{row.receipt_remarks || row.receipt_qc_remarks || '-'}</td>
                     </tr>
                   ))}
                 </tbody>

@@ -316,6 +316,7 @@ export type TraceabilityResult = {
     run_remarks?: string | null
     request_remarks?: string | null
     request_approval_remarks?: string | null
+    operator_code?: string
   }
   rawMaterials: Array<Record<string, string | number | null>>
   fgQc: Array<Record<string, string | number | null>>
