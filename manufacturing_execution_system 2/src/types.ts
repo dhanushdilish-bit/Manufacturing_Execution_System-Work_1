@@ -160,6 +160,7 @@ export type ProductionPlan = {
   plan_date: string
   shift?: string | null
   batch_number?: string | null
+  machine_no?: string | null
   status: string
   remarks?: string | null
   created_by_name?: string

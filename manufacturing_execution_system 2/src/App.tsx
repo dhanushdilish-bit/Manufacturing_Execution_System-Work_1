@@ -296,6 +296,7 @@ function App() {
     planned_qty: '',
     plan_date: toLocalInputValue(new Date()).split('T')[0],
     shift: 'A',
+    machine_no: '',
   })
   const [productionForm, setProductionForm] = useState<Record<string, string>>({
     plan_id: '',
@@ -2069,6 +2070,14 @@ function Production({
             </select>
           </label>
           <label>
+            Machine No
+            <input
+              value={planForm.machine_no || ''}
+              onChange={(event) => setPlanForm({ ...planForm, machine_no: event.target.value })}
+              placeholder="e.g. M1-02"
+            />
+          </label>
+          <label>
             Remarks
             <input value={planForm.remarks || ''} onChange={(event) => setPlanForm({ ...planForm, remarks: event.target.value })} />
           </label>
@@ -2337,7 +2346,18 @@ function Production({
           <div className="detail-grid" style={{ gap: '1rem', background: 'var(--surface-sunken)', padding: '1rem', borderRadius: '8px' }}>
             <label className="span-two">
               Approved Request (Plan)
-              <select value={runForm.request_id} onChange={(event) => setRunForm({ ...runForm, request_id: event.target.value })} required>
+              <select value={runForm.request_id} onChange={(event) => {
+                const reqId = event.target.value
+                const req = approved.find(r => r.id === Number(reqId))
+                const plan = req && req.plan_id ? workflow.productionPlans.find(p => p.id === req.plan_id) : null
+                
+                setRunForm({ 
+                  ...runForm, 
+                  request_id: reqId,
+                  shift: plan?.shift || runForm.shift,
+                  machine_no: plan?.machine_no || runForm.machine_no
+                })
+              }} required>
                 <option value="">Select</option>
                 {approved.map((request) => (
                   <option key={request.id} value={request.id}>

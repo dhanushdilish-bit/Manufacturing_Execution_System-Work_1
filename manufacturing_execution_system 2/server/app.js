@@ -1017,12 +1017,13 @@ function createProductionPlan(db, body, userId) {
   const planDate = String(body.plan_date || '').trim()
   const shift = String(body.shift || 'A').trim()
   const batchNumber = String(body.batch_number || '').trim()
+  const machineNo = String(body.machine_no || '').trim()
   if (!targetId || !productId || !planDate) throw httpError(400, 'Target, Product, and Plan Date are required')
 
   const planId = db.prepare(`
-    INSERT INTO production_plans (target_id, product_id, planned_qty, plan_date, shift, batch_number, remarks, created_by)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(targetId, productId, plannedQty, planDate, shift, batchNumber, body.remarks || null, userId).lastInsertRowid
+    INSERT INTO production_plans (target_id, product_id, planned_qty, plan_date, shift, batch_number, machine_no, remarks, created_by)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(targetId, productId, plannedQty, planDate, shift, batchNumber, machineNo || null, body.remarks || null, userId).lastInsertRowid
 
   return db.prepare('SELECT * FROM production_plans WHERE id = ?').get(planId)
 }

@@ -172,6 +172,7 @@ export function createSchema(db) {
       plan_date TEXT NOT NULL,
       shift TEXT,
       batch_number TEXT,
+      machine_no TEXT,
       status TEXT NOT NULL DEFAULT 'PLANNED'
         CHECK (status IN ('PLANNED', 'REQUESTED', 'IN_PRODUCTION', 'PRODUCED')),
       remarks TEXT,
@@ -367,6 +368,7 @@ function ensureProductionPlanningColumns(db) {
   const planCols = new Set(db.prepare('PRAGMA table_info(production_plans)').all().map(c => c.name))
   if (!planCols.has('shift')) db.exec('ALTER TABLE production_plans ADD COLUMN shift TEXT')
   if (!planCols.has('batch_number')) db.exec('ALTER TABLE production_plans ADD COLUMN batch_number TEXT')
+  if (!planCols.has('machine_no')) db.exec('ALTER TABLE production_plans ADD COLUMN machine_no TEXT')
 }
 
 function ensureProductionRunLoggingColumns(db) {
