@@ -19,8 +19,19 @@ import {
   Users,
   Warehouse,
   XCircle,
+  Dna,
 } from 'lucide-react'
 import { type FormEvent, type ReactNode, useEffect, useMemo, useState } from 'react'
+
+const MotherLogo = ({ size = 32 }: { size?: number }) => (
+  <div style={{ position: 'relative', width: size, height: size, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+    <Settings size={size} color="#29AAE2" strokeWidth={2.5} />
+    <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <Dna size={size * 0.5} color="#F7941D" strokeWidth={3} />
+    </div>
+  </div>
+)
+
 import { api, postJson, putJson } from './api'
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer,
@@ -515,9 +526,9 @@ function App() {
       <main className="login-shell">
         <form className="login-panel" onSubmit={handleLogin}>
           <div className="brand-mark">
-            <Factory size={28} />
+            <MotherLogo size={36} />
           </div>
-          <h1>Manufacturing Execution System</h1>
+          <h1>Mother Industries</h1>
           <label>
             Username
             <input value={login.username} onChange={(event) => setLogin({ ...login, username: event.target.value })} />
@@ -551,9 +562,9 @@ function App() {
     <main className="app-shell">
       <aside className="sidebar">
         <div className="app-title">
-          <Factory size={28} />
+          <MotherLogo size={32} />
           <div>
-            <strong>MES Control</strong>
+            <strong>Mother Industries</strong>
             <span>{bootstrap?.roles?.find(r => r.code === user.role)?.name ?? user.role}</span>
           </div>
         </div>
