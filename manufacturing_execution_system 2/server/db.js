@@ -138,8 +138,7 @@ export function createSchema(db) {
       remarks TEXT,
       qc_remarks TEXT,
       created_by INTEGER REFERENCES users(id),
-      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      UNIQUE(material_id, lot_number)
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
     CREATE TABLE IF NOT EXISTS rm_qc_results (

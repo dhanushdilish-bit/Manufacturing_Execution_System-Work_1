@@ -148,7 +148,7 @@ export function createApp(db = initDatabase()) {
     res.status(201).json(transfer)
   })
 
-  app.post('/api/production-targets', requireUser(db), requireRoles('admin', 'manager'), (req, res) => {
+  app.post('/api/production-targets', requireUser(db), requireRoles('admin', 'manager', 'production', 'production_head'), (req, res) => {
     const target = createProductionTarget(db, req.body ?? {}, req.user.id)
     res.status(201).json(target)
   })
@@ -1228,7 +1228,16 @@ function createProductionRun(db, body, userId) {
   const startedAt = body.started_at || nowIso()
   const endedAt = body.ended_at || null
   const runMinutes = Number(body.run_minutes) || calculateMinutes(startedAt, endedAt)
-  const batchCode = generateBatchCode(db, product.code, shift, startedAt, request.product_id)
+  
+  let batchCode = null;
+  if (request.plan_id) {
+    const plan = db.prepare('SELECT batch_number FROM production_plans WHERE id = ?').get(request.plan_id);
+    if (plan && plan.batch_number) batchCode = plan.batch_number;
+  }
+  if (!batchCode) {
+    batchCode = generateBatchCode(db, product.code, shift, startedAt, request.product_id);
+  }
+
   const consumptionOverrides = body.consumption ?? {}
 
   return inTransaction(db, () => {

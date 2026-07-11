@@ -2004,6 +2004,16 @@ function Production({
             const shift = planForm.shift || 'A'
             const batchNumber = `TP${dd || '00'}${mm || '00'}${yy || '00'}${shift}`
 
+            const existingPlan = workflow.productionPlans.find(p => p.batch_number === batchNumber)
+            if (existingPlan) {
+              Swal.fire({
+                title: 'Shift Already Planned',
+                text: `A production plan for Shift ${shift} on this date already exists (Batch: ${batchNumber}). The One Batch = One Shift rule is enforced.`,
+                icon: 'error'
+              })
+              return
+            }
+
             submitAction(postJson('/api/production-plans', { ...planForm, shift, batch_number: batchNumber, product_id: productId }), 'Production plan created')
           }}
         >
