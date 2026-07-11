@@ -1449,19 +1449,52 @@ function createDispatch(db, body, userId) {
         ? `Courier: ${courierName || '-'} (LR: ${bookingLr || '-'})`
         : `Vehicle: ${body.vehicle_no || '-'} (Driver: ${driverName || '-'}, Phone: ${driverPhone || '-'})`
         
+      const trace = getTraceability(db, batch.batch_code)
+      const rmList = trace.rawMaterials.map(rm => 
+        `<li style="margin-bottom: 4px;">${rm.material_name} (Lot: ${rm.lot_number}, Supplier: ${rm.supplier})</li>`
+      ).join('')
+      
+      let qcPassDate = 'N/A'
+      if (trace.fgQc && trace.fgQc.length > 0) {
+        qcPassDate = new Date(trace.fgQc[0].checked_at).toLocaleDateString()
+      }
+
       const feedbackUrl = `http://127.0.0.1:5173/#/feedback/${dispatchId}`
       const emailHtml = `
-        <h2>Your Order has been Dispatched!</h2>
-        <p>Dear ${customer},</p>
-        <p>Your order (Ref: <strong>${orderRef}</strong>) has been shipped.</p>
-        <ul>
-          <li><strong>Product:</strong> ${productName}</li>
-          <li><strong>Batch:</strong> ${batch.batch_code}</li>
-          <li><strong>Quantity:</strong> ${quantity} ${unitCode}</li>
-          <li><strong>Transport:</strong> ${transportDetails}</li>
-        </ul>
-        <p>We value your feedback. Please let us know how we did by clicking the link below:</p>
-        <p><a href="${feedbackUrl}" style="display: inline-block; padding: 10px 15px; background: #0ea5e9; color: white; text-decoration: none; border-radius: 4px;">Provide Feedback</a></p>
+        <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; color: #333;">
+          <h2 style="color: #0ea5e9;">Your Order has been Dispatched!</h2>
+          <p>Dear ${customer},</p>
+          <p>Your order (Ref: <strong>${orderRef}</strong>) has been shipped.</p>
+          
+          <div style="background: #f8fafc; padding: 15px; border-radius: 8px; margin: 20px 0;">
+            <ul style="list-style: none; padding: 0; margin: 0;">
+              <li style="margin-bottom: 8px;"><strong>Product:</strong> ${productName}</li>
+              <li style="margin-bottom: 8px;"><strong>Batch:</strong> ${batch.batch_code}</li>
+              <li style="margin-bottom: 8px;"><strong>Quantity:</strong> ${quantity} ${unitCode}</li>
+              <li><strong>Transport:</strong> ${transportDetails}</li>
+            </ul>
+          </div>
+
+          <hr style="border: 0; border-top: 1px solid #e2e8f0; margin: 25px 0;" />
+          <h3 style="color: #475569; margin-bottom: 10px;">🔍 Production Traceability</h3>
+          <p style="font-size: 14px; color: #64748b; margin-top: 0;">For your quality assurance records, here is the verified traceability data for this batch:</p>
+          
+          <ul style="font-size: 14px; color: #334155; line-height: 1.6;">
+            <li><strong>Production Date:</strong> ${new Date(trace.batch.started_at).toLocaleDateString()}</li>
+            <li><strong>Quality Check (QC/QA) Passed:</strong> ${qcPassDate}</li>
+            <li><strong>Raw Materials Used:</strong>
+              <ul style="margin-top: 8px; color: #64748b;">
+                ${rmList}
+              </ul>
+            </li>
+          </ul>
+          <hr style="border: 0; border-top: 1px solid #e2e8f0; margin: 25px 0;" />
+
+          <p>We value your feedback. Please let us know how we did by clicking the link below:</p>
+          <p style="margin-top: 20px;">
+            <a href="${feedbackUrl}" style="display: inline-block; padding: 12px 20px; background: #0ea5e9; color: white; text-decoration: none; border-radius: 6px; font-weight: bold;">Provide Feedback</a>
+          </p>
+        </div>
       `
 
       transporter.sendMail({
