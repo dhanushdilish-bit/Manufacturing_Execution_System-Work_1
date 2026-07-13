@@ -1477,7 +1477,7 @@ function createDispatch(db, body, userId) {
 
           <hr style="border: 0; border-top: 1px solid #e2e8f0; margin: 25px 0;" />
           <p style="font-size: 14px; color: #334155; margin-bottom: 15px;">For more details of the Batch, click the link below.</p>
-          <a href="http://127.0.0.1:5173/#/public-trace/${encodeURIComponent(batch.batch_code)}" style="display: inline-block; background: #0ea5e9; color: #fff; padding: 10px 20px; text-decoration: none; border-radius: 6px; font-weight: bold; margin-bottom: 10px;">Traceability</a>
+          <a href="https://startling-relocate-deviation.ngrok-free.dev/#/public-trace/${encodeURIComponent(batch.batch_code)}" style="display: inline-block; background: #0ea5e9; color: #fff; padding: 10px 20px; text-decoration: none; border-radius: 6px; font-weight: bold; margin-bottom: 10px;">Traceability</a>
           <hr style="border: 0; border-top: 1px solid #e2e8f0; margin: 25px 0;" />
 
           <p>We value your feedback. Please let us know how we did by clicking the link below:</p>
