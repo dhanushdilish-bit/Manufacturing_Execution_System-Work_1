@@ -15,8 +15,7 @@ const transporter = nodemailer.createTransport({
 })
 
 const ADMIN_ROLES = new Set(['admin', 'manager'])
-const VALID_ROLES = ['admin', 'manager', 'rm_store', 'production', 'qc', 'qa', 'fg_store', 'dispatch']
-const VALID_ROLE_SET = new Set(VALID_ROLES)
+// VALID_ROLES is now dynamically checked against the roles table in normalizeRole
 
 export function createApp(db = initDatabase()) {
   const app = express()
@@ -227,6 +226,40 @@ export function createApp(db = initDatabase()) {
       VALUES (?, ?, ?)
     `).run(dispatchId, r, comments || null).lastInsertRowid
     
+    // Fetch dispatch details to send email
+    const dispatch = db.prepare('SELECT d.order_ref, d.customer FROM dispatches d WHERE d.id = ?').get(dispatchId)
+    if (dispatch && transporter) {
+      const adminEmail = process.env.ADMIN_EMAIL || process.env.SMTP_USER;
+      if (adminEmail) {
+        transporter.sendMail({
+          from: process.env.SMTP_USER,
+          to: adminEmail,
+          subject: `New Feedback Received - Order ${dispatch.order_ref}`,
+          html: `<div style="font-family: sans-serif;">
+            <h2 style="color: #0ea5e9;">New Customer Feedback</h2>
+            <p><strong>Customer:</strong> ${dispatch.customer}</p>
+            <p><strong>Order Ref:</strong> ${dispatch.order_ref}</p>
+            <p><strong>Rating:</strong> ${r} / 5</p>
+            <p><strong>Comments:</strong> ${comments || 'None'}</p>
+          </div>`
+        }).catch(err => console.error('Failed to send feedback email:', err))
+      }
+    }
+    
+    res.status(201).json({ success: true, id: feedbackId })
+  })
+
+  app.post('/api/dispatches/:id/complete', requireUser(db), requireRoles('admin', 'manager'), (req, res) => {
+    const dispatchId = Number(req.params.id)
+    
+    const existing = db.prepare('SELECT id FROM customer_feedback WHERE dispatch_id = ?').get(dispatchId)
+    if (existing) return res.status(409).json({ error: 'Feedback already submitted for this order' })
+
+    const feedbackId = db.prepare(`
+      INSERT INTO customer_feedback (dispatch_id, rating, comments)
+      VALUES (?, ?, ?)
+    `).run(dispatchId, 5, 'Manually marked as completed by Admin.').lastInsertRowid
+
     res.status(201).json({ success: true, id: feedbackId })
   })
 
@@ -300,7 +333,7 @@ export function createApp(db = initDatabase()) {
           baseSql = `
             SELECT fb.*, p.code AS product_code, p.name AS product_name, u.code AS unit_code,
                    qc.name AS qc_by_name,
-                   prun.started_at, prun.shift, prun.machine_no, prun.quantity_produced, prun.rejected_pieces,
+                   prun.started_at, prun.shift, prun.machine_no, prun.quantity_produced, prun.rejected_pieces, prun.testing_sample_qty,
                    emp.name AS operator_name, emp.emp_code AS operator_code,
                    COALESCE((SELECT SUM(quantity) FROM dispatches WHERE batch_id = fb.id), 0) AS dispatched_qty,
                    fb.quantity - COALESCE((SELECT SUM(quantity) FROM dispatches WHERE batch_id = fb.id), 0) AS remaining_qty
@@ -478,6 +511,7 @@ function getBootstrap(db, user) {
     qcParameters: listResource(db, 'qc-parameters'),
     employees: listResource(db, 'employees'),
     suppliers: listResource(db, 'suppliers'),
+    customers: listResource(db, 'customers'),
   }
 }
 
@@ -571,14 +605,18 @@ function listFgBatches(db) {
   return db.prepare(`
     SELECT fb.*, p.code AS product_code, p.name AS product_name, u.code AS unit_code,
            qc.name AS qc_by_name,
+           prun.started_at, prun.shift, prun.machine_no, prun.quantity_produced, prun.rejected_pieces, prun.testing_sample_qty,
+           emp.name AS operator_name, emp.emp_code AS operator_code,
            COALESCE(SUM(d.quantity), 0) AS dispatched_qty,
            fb.quantity - COALESCE(SUM(d.quantity), 0) AS remaining_qty
     FROM fg_batches fb
     JOIN products p ON p.id = fb.product_id
     JOIN units u ON u.id = p.unit_id
+    LEFT JOIN production_runs prun ON prun.id = fb.production_run_id
+    LEFT JOIN employees emp ON emp.id = prun.operator_id
     LEFT JOIN users qc ON qc.id = fb.qc_by
     LEFT JOIN dispatches d ON d.batch_id = fb.id
-    GROUP BY fb.id
+    GROUP BY fb.id, prun.id, emp.id
     ORDER BY fb.id DESC
   `).all()
 }
@@ -606,6 +644,11 @@ const RESOURCE_MAP = {
     table: 'suppliers',
     fields: ['name', 'address', 'gst', 'contact', 'email', 'contact_person', 'active'],
     list: 'SELECT * FROM suppliers ORDER BY name',
+  },
+  customers: {
+    table: 'customers',
+    fields: ['name', 'address', 'gst', 'contact', 'email', 'contact_person', 'active'],
+    list: 'SELECT * FROM customers ORDER BY name',
   },
   units: {
     table: 'units',
@@ -770,7 +813,7 @@ function createUser(db, body) {
   const username = normalizeUsername(body.username)
   const password = normalizePassword(body.password, true)
   const name = normalizeRequiredString(body.name, 'Name')
-  const role = normalizeRole(body.role)
+  const role = normalizeRole(db, body.role)
   const active = normalizeActive(body.active, 1)
 
   const existing = db.prepare('SELECT id FROM users WHERE lower(username) = lower(?)').get(username)
@@ -812,7 +855,7 @@ function updateUser(db, id, body) {
   }
 
   if (Object.hasOwn(body, 'role')) {
-    nextRole = normalizeRole(body.role)
+    nextRole = normalizeRole(db, body.role)
     updates.push('role = ?')
     values.push(nextRole)
   }
@@ -875,9 +918,10 @@ function normalizeRequiredString(value, label) {
   return text
 }
 
-function normalizeRole(value) {
+function normalizeRole(db, value) {
   const role = String(value ?? '').trim()
-  if (!VALID_ROLE_SET.has(role)) throw httpError(400, 'Selected role is not valid')
+  const exists = db.prepare('SELECT 1 FROM roles WHERE code = ?').get(role)
+  if (!exists) throw httpError(400, 'Selected role is not valid')
   return role
 }
 
@@ -1459,7 +1503,7 @@ function createDispatch(db, body, userId) {
         qcPassDate = new Date(trace.fgQc[0].checked_at).toLocaleDateString()
       }
 
-      const feedbackUrl = `http://127.0.0.1:5173/#/feedback/${dispatchId}`
+      const feedbackUrl = `https://startling-relocate-deviation.ngrok-free.dev/#/feedback/${dispatchId}`
       const emailHtml = `
         <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; color: #333;">
           <h2 style="color: #0ea5e9;">Your Order has been Dispatched!</h2>

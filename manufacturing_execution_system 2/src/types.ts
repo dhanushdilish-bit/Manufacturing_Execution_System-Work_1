@@ -38,6 +38,17 @@ export type Supplier = {
   active: number
 }
 
+export type Customer = {
+  id: number
+  name: string
+  address: string | null
+  gst: string | null
+  contact: string | null
+  email: string | null
+  contact_person: string | null
+  active: number
+}
+
 export type RawMaterial = {
   id: number
   code: string
@@ -103,6 +114,7 @@ export type BootstrapData = {
   qcParameters: QcParameter[]
   employees: Employee[]
   suppliers: Supplier[]
+  customers: Customer[]
 }
 
 export type RmReceipt = {

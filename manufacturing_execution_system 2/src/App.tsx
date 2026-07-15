@@ -675,13 +675,14 @@ function App() {
         {activeTab === 'fg' && (
           <FgAndDispatch
             batches={workflow.fgBatches}
+            customers={bootstrap.customers}
             form={dispatchForm}
             setForm={setDispatchForm}
             submitAction={submitAction}
           />
         )}
         {activeTab === 'traceability' && (
-          <Traceability query={traceQuery} setQuery={setTraceQuery} trace={trace} onSubmit={traceBatch} />
+          <Traceability user={user} query={traceQuery} setQuery={setTraceQuery} trace={trace} onSubmit={traceBatch} refresh={() => traceBatch({ preventDefault: () => {} } as any)} />
         )}
         {activeTab === 'users' && (
           <div className="stack">
@@ -720,7 +721,7 @@ function App() {
       {printingLogSheet && <PrintLogSheet batch={printingLogSheet} />}
       {printingCoverSlip && <PrintCoverSlip batch={printingCoverSlip} />}
       {printingCartonSlip && <PrintCartonSlip dispatch={printingCartonSlip} />}
-      {printingAddressSlip && <PrintAddressSlip dispatch={printingAddressSlip} />}
+      {printingAddressSlip && <PrintAddressSlip dispatch={printingAddressSlip} customers={bootstrap?.customers || []} />}
     </main>
   )
 }
@@ -2709,11 +2710,13 @@ function DayStore({
 
 function FgAndDispatch({
   batches,
+  customers,
   form,
   setForm,
   submitAction,
 }: {
   batches: FgBatch[]
+  customers: Customer[]
   form: Record<string, string>
   setForm: (value: Record<string, string>) => void
   submitAction: <T>(action: Promise<T>, message: string) => Promise<boolean>
@@ -2756,11 +2759,18 @@ function FgAndDispatch({
           </label>
           <label>
             Customer
-            <input value={form.customer || ''} onChange={(event) => setForm({ ...form, customer: event.target.value })} required />
+            <select value={form.customer || ''} onChange={(event) => setForm({ ...form, customer: event.target.value })} required>
+              <option value="">Select</option>
+              {customers.map((c) => (
+                <option key={c.id} value={c.name}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
           </label>
           <label>
             Customer Email
-            <input type="email" value={form.customer_email || ''} onChange={(event) => setForm({ ...form, customer_email: event.target.value })} />
+            <input type="email" multiple placeholder="email1@gmail.com, email2@gmail.com" value={form.customer_email || ''} onChange={(event) => setForm({ ...form, customer_email: event.target.value })} />
           </label>
           <label className="span-two">
             P.O Number
@@ -2851,16 +2861,30 @@ function FgAndDispatch({
 }
 
 function Traceability({
+  user,
   query,
   setQuery,
   trace,
   onSubmit,
+  refresh,
 }: {
+  user: User
   query: string
   setQuery: (value: string) => void
   trace: TraceabilityResult | null
   onSubmit: (event: FormEvent) => void
+  refresh: () => void
 }) {
+  const handleMarkCompleted = async (id: number) => {
+    if (!confirm('Mark this dispatch as manually completed?')) return
+    try {
+      const res = await api(`/api/dispatches/${id}/complete`, { method: 'POST' })
+      if (res.error) alert(res.error)
+      else refresh()
+    } catch (e: any) {
+      alert(e.message)
+    }
+  }
   return (
     <div className="stack">
       <section className="panel">
@@ -3013,7 +3037,17 @@ function Traceability({
                           )}
                         </div>
                       ) : (
-                        <span style={{ color: 'var(--text-muted)', fontSize: '0.85em' }}>Pending</span>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'flex-start' }}>
+                          <span style={{ color: 'var(--text-muted)', fontSize: '0.85em' }}>Pending</span>
+                          {user.role === 'admin' && (
+                            <button 
+                              style={{ background: 'none', border: 'none', color: 'var(--primary)', padding: 0, fontSize: '0.85em', fontWeight: 600, cursor: 'pointer' }}
+                              onClick={() => handleMarkCompleted(dispatch.id)}
+                            >
+                              Mark Completed
+                            </button>
+                          )}
+                        </div>
                       )}
                     </td>
                     <td>{dispatch.approved_by_name || '-'}</td>
@@ -3482,6 +3516,31 @@ function MasterData({
         title="Supplier"
         resourcePath="/api/master/suppliers"
         data={bootstrap.suppliers}
+        columns={[
+          { key: 'name', label: 'Name' },
+          { key: 'contact', label: 'Contact' },
+          { key: 'email', label: 'Email' }
+        ]}
+        defaultForm={{ name: '', address: '', gst: '', contact: '', email: '', contact_person: '', active: '1' }}
+        submitAction={submitAction}
+      >
+        {(form, setForm) => (
+          <>
+            <TextInput label="Name" value={form.name} onChange={(value) => setForm({ ...form, name: value })} />
+            <TextInput label="Address" value={form.address} onChange={(value) => setForm({ ...form, address: value })} />
+            <TextInput label="GST Number" value={form.gst} onChange={(value) => setForm({ ...form, gst: value })} />
+            <TextInput label="Contact No" value={form.contact} onChange={(value) => setForm({ ...form, contact: value })} />
+            <TextInput label="Email" value={form.email} onChange={(value) => setForm({ ...form, email: value })} />
+            <TextInput label="Contact Person" value={form.contact_person} onChange={(value) => setForm({ ...form, contact_person: value })} />
+          </>
+        )}
+      </MasterSection>
+
+      <MasterSection
+        icon={Users}
+        title="Customer"
+        resourcePath="/api/master/customers"
+        data={bootstrap.customers}
         columns={[
           { key: 'name', label: 'Name' },
           { key: 'contact', label: 'Contact' },
@@ -4385,6 +4444,7 @@ function PrintLogSheet({ batch }: { batch: any }) {
           <thead>
             <tr>
               <th>Production</th>
+              <th>Rejected</th>
               <th>Tested</th>
               <th>Accepted</th>
             </tr>
@@ -4393,7 +4453,8 @@ function PrintLogSheet({ batch }: { batch: any }) {
             <tr>
               <td>{batch.quantity_produced || '-'}</td>
               <td>{batch.rejected_pieces || '-'}</td>
-              <td>{batch.quantity || '-'}</td>
+              <td>{batch.testing_sample_qty || '-'}</td>
+              <td>{Number(batch.quantity_produced || 0) - (Number(batch.rejected_pieces || 0) + Number(batch.testing_sample_qty || 0))}</td>
             </tr>
           </tbody>
         </table>
@@ -4446,7 +4507,8 @@ function PrintCartonSlip({ dispatch }: { dispatch: any }) {
   )
 }
 
-function PrintAddressSlip({ dispatch }: { dispatch: any }) {
+function PrintAddressSlip({ dispatch, customers }: { dispatch: any, customers: Customer[] }) {
+  const customerRecord = customers.find(c => c.name === dispatch.customer)
   return (
     <div className="print-container">
       <div className="print-sticker-address">
@@ -4461,7 +4523,8 @@ function PrintAddressSlip({ dispatch }: { dispatch: any }) {
         <div className="box" style={{ marginTop: '30px' }}>
           <h3>TO:</h3>
           <p style={{ fontSize: '16px', whiteSpace: 'pre-wrap' }}>
-            {dispatch.customer}
+            <strong>{dispatch.customer}</strong><br/>
+            {customerRecord?.address || ''}
           </p>
         </div>
       </div>

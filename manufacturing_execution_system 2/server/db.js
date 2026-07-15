@@ -85,6 +85,17 @@ export function createSchema(db) {
       active INTEGER NOT NULL DEFAULT 1
     );
 
+    CREATE TABLE IF NOT EXISTS customers (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL UNIQUE,
+      address TEXT,
+      gst TEXT,
+      contact TEXT,
+      email TEXT,
+      contact_person TEXT,
+      active INTEGER NOT NULL DEFAULT 1
+    );
+
     CREATE TABLE IF NOT EXISTS bom_items (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
@@ -624,6 +635,25 @@ function seedDatabase(db) {
       active = 1
   `)
   for (const row of supplierRows) insertSupplier.run(...row)
+
+  const customerRows = [
+    ['MotorCorp Assembly', '123 Automotive Park, Detroit, MI', 'GSTIN123456', '+1 555-0101', 'orders@motorcorp.com', 'Sarah Jenkins'],
+    ['Quantum Robotics', '789 Tech Valley, San Jose, CA', 'GSTIN987654', '+1 555-0202', 'purchasing@quantum.com', 'David Chen'],
+    ['TechFlow Systems', '456 Innovation Way, Austin, TX', 'GSTIN456789', '+1 555-0303', 'supply@techflow.com', 'Emily Parker'],
+    ['Global Manufacturing', '321 Industrial Blvd, Chicago, IL', 'GSTIN321654', '+1 555-0404', 'vendor.relations@globalmfg.com', 'Michael Scott']
+  ]
+  const insertCustomer = db.prepare(`
+    INSERT INTO customers (name, address, gst, contact, email, contact_person)
+    VALUES (?, ?, ?, ?, ?, ?)
+    ON CONFLICT(name) DO UPDATE SET
+      address = excluded.address,
+      gst = excluded.gst,
+      contact = excluded.contact,
+      email = excluded.email,
+      contact_person = excluded.contact_person,
+      active = 1
+  `)
+  for (const row of customerRows) insertCustomer.run(...row)
 
   const productRows = [
     ['RAIL', 'Precision Rail Assembly', unitId('PCS')],
