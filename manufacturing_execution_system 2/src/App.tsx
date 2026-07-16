@@ -2782,15 +2782,17 @@ function FgAndDispatch({
 }) {
   const available = batches.filter((batch) => ['READY_FOR_DISPATCH', 'PARTIAL_DISPATCH'].includes(batch.status) && Number(batch.remaining_qty) > 0)
   const transportType = form.transport_type || 'OWN'
+  const [selectedBatches, setSelectedBatches] = useState<string[]>([])
+  const [batchQuantities, setBatchQuantities] = useState<Record<string, string>>({})
   
   const getBaseCode = (code: string) => code.replace(/[A-Za-z]$/, '')
 
   const groupedAvailable = useMemo(() => {
-    const groups = new Map<string, { base_code: string, remaining_qty: number, unit_code: string }>()
+    const groups = new Map<string, any>()
     available.forEach(batch => {
       const baseCode = getBaseCode(batch.batch_code)
       if (!groups.has(baseCode)) {
-        groups.set(baseCode, { base_code: baseCode, remaining_qty: 0, unit_code: batch.unit_code })
+        groups.set(baseCode, { ...batch, batch_code: baseCode, remaining_qty: 0, id: baseCode })
       }
       groups.get(baseCode)!.remaining_qty += Number(batch.remaining_qty)
     })
@@ -2823,17 +2825,46 @@ function FgAndDispatch({
             }
           }}
         >
-          <label className="span-two">
-            FG batch
-            <select value={form.base_batch_code || ''} onChange={(event) => setForm({ ...form, base_batch_code: event.target.value })} required>
-              <option value="">Select</option>
-              {groupedAvailable.map((group) => (
-                <option key={group.base_code} value={group.base_code}>
-                  {group.base_code} - {fmtQty(group.remaining_qty)} {group.unit_code}
-                </option>
-              ))}
-            </select>
-          </label>
+          
+          <div className="span-two" style={{ padding: '12px', background: '#f8fafc', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
+            <h4 style={{ margin: '0 0 12px 0' }}>Selected Batches to Dispatch</h4>
+            {selectedBatches.length === 0 ? (
+              <p style={{ margin: 0, color: '#64748b', fontSize: '14px' }}>Check boxes in the FG Store table to select batches.</p>
+            ) : (
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr style={{ textAlign: 'left', borderBottom: '1px solid #cbd5e1' }}>
+                    <th style={{ padding: '8px 0', fontSize: '12px', color: '#64748b' }}>BATCH CODE</th>
+                    <th style={{ padding: '8px 0', fontSize: '12px', color: '#64748b' }}>DISPATCH QUANTITY</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {selectedBatches.map(code => {
+                    const group = groupedAvailable.find(g => g.batch_code === code)
+                    return (
+                      <tr key={code} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                        <td style={{ padding: '8px 0', fontWeight: 'bold' }}>{code}</td>
+                        <td style={{ padding: '8px 0' }}>
+                          <input 
+                            type="number" 
+                            style={{ width: '120px', padding: '6px', border: '1px solid #cbd5e1', borderRadius: '4px' }}
+                            placeholder={`Max ${group?.remaining_qty}`}
+                            value={batchQuantities[code] || ''}
+                            onChange={(e) => setBatchQuantities({...batchQuantities, [code]: e.target.value})}
+                            required
+                            max={group?.remaining_qty}
+                            min="1"
+                          />
+                          <span style={{ marginLeft: '8px', fontSize: '14px', color: '#64748b' }}>{group?.unit_code}</span>
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            )}
+          </div>
+
           <label>
             Customer
             <select value={form.customer || ''} onChange={(event) => setForm({ ...form, customer: event.target.value })} required>
@@ -2862,17 +2893,7 @@ function FgAndDispatch({
               required
             />
           </label>
-          <label>
-            Quantity {selectedGroup ? `(${selectedGroup.unit_code})` : ''}
-            <input
-              min="0.001"
-              step="0.001"
-              type="number"
-              value={form.quantity}
-              onChange={(event) => setForm({ ...form, quantity: event.target.value })}
-              required
-            />
-          </label>
+          
           
           <label className="span-two">
             Transport Type
@@ -2927,7 +2948,20 @@ function FgAndDispatch({
       </section>
       <section className="panel">
         <PanelTitle icon={PackageCheck} title="FG Store" />
-        <BatchTable batches={batches.filter((batch) => ['READY_FOR_DISPATCH', 'PARTIAL_DISPATCH', 'DISPATCHED'].includes(batch.status))} />
+        <BatchTable 
+          batches={groupedAvailable} 
+          selectedCodes={selectedBatches}
+          onSelect={(code, checked) => {
+            if (checked) {
+              setSelectedBatches(prev => [...prev, code])
+            } else {
+              setSelectedBatches(prev => prev.filter(c => c !== code))
+              const q = { ...batchQuantities }
+              delete q[code]
+              setBatchQuantities(q)
+            }
+          }}
+        />
       </section>
       <section className="panel wide">
         <PanelTitle icon={Truck} title="Dispatch Log" />
@@ -3944,7 +3978,15 @@ function IssueList({ request, issues, showStaged }: { request: ProductionRequest
   )
 }
 
-function BatchTable({ batches }: { batches: FgBatch[] }) {
+function BatchTable({ 
+  batches,
+  selectedCodes = [],
+  onSelect,
+}: { 
+  batches: any[],
+  selectedCodes?: string[],
+  onSelect?: (code: string, checked: boolean) => void
+}) {
   return (
     <table>
       <thead>
@@ -3959,7 +4001,16 @@ function BatchTable({ batches }: { batches: FgBatch[] }) {
       </thead>
       <tbody>
         {batches.map((batch) => (
-          <tr key={batch.id}>
+          <tr key={batch.id || batch.batch_code}>
+            {onSelect && (
+              <td>
+                <input 
+                  type="checkbox" 
+                  checked={selectedCodes.includes(batch.batch_code || batch.base_code)}
+                  onChange={(e) => onSelect(batch.batch_code || batch.base_code, e.target.checked)}
+                />
+              </td>
+            )}
             <td>{batch.batch_code}</td>
             <td>{batch.product_code} - {batch.product_name}</td>
             <td>{fmtQty(batch.quantity)} {batch.unit_code}</td>

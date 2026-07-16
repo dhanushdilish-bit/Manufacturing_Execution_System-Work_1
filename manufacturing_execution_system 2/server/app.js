@@ -1449,11 +1449,11 @@ function qaFgBatch(db, batchId, body, userId) {
 }
 
 function createDispatch(db, body, userId) {
-  const baseBatchCode = body.base_batch_code ? String(body.base_batch_code).trim() : null;
-  const quantity = mustNumber(body.quantity, 'Dispatch quantity')
   const customer = String(body.customer || '').trim()
   const orderRef = String(body.order_ref || '').trim()
-  if (!baseBatchCode || !customer || !orderRef) throw httpError(400, 'Grouped batch code, customer, and order reference are required')
+  const inputBatches = Array.isArray(body.batches) ? body.batches : []
+  
+  if (!customer || !orderRef || inputBatches.length === 0) throw httpError(400, 'Customer, order reference, and at least one batch are required')
 
   const transportType = String(body.transport_type || 'OWN').trim()
   const driverName = String(body.driver_name || '').trim() || null
@@ -1462,25 +1462,30 @@ function createDispatch(db, body, userId) {
   const bookingLr = String(body.booking_lr || '').trim() || null
   const customerEmail = String(body.customer_email || '').trim() || null
 
-  const batches = db.prepare(`SELECT * FROM fg_batches WHERE status IN ('READY_FOR_DISPATCH', 'PARTIAL_DISPATCH') ORDER BY id ASC`).all()
-    .filter(b => b.batch_code === baseBatchCode || (b.batch_code.startsWith(baseBatchCode) && b.batch_code.length === baseBatchCode.length + 1 && /[A-Za-z]/.test(b.batch_code.slice(-1))));
-
-  if (batches.length === 0) throw httpError(404, 'No matching FG batches found for dispatch')
-
-  let remainingNeeded = quantity;
   const dispatchesToCreate = [];
-  
-  for (const batch of batches) {
-    if (remainingNeeded <= 0) break;
-    const batchRemaining = getFgRemaining(db, batch.id);
-    if (batchRemaining > 0) {
-      const take = Math.min(batchRemaining, remainingNeeded);
-      dispatchesToCreate.push({ batch, take });
-      remainingNeeded -= take;
-    }
-  }
+  const allAvailableBatches = db.prepare(`SELECT * FROM fg_batches WHERE status IN ('READY_FOR_DISPATCH', 'PARTIAL_DISPATCH') ORDER BY id ASC`).all()
 
-  if (remainingNeeded > 0.000001) throw httpError(409, 'Dispatch quantity exceeds combined available FG stock')
+  for (const item of inputBatches) {
+    const baseBatchCode = String(item.base_batch_code).trim();
+    const quantity = mustNumber(item.quantity, `Dispatch quantity for ${baseBatchCode}`);
+    
+    const batches = allAvailableBatches.filter(b => b.batch_code === baseBatchCode || (b.batch_code.startsWith(baseBatchCode) && b.batch_code.length === baseBatchCode.length + 1 && /[A-Za-z]/.test(b.batch_code.slice(-1))));
+    
+    if (batches.length === 0) throw httpError(404, `No matching FG batches found for ${baseBatchCode}`);
+    
+    let remainingNeeded = quantity;
+    for (const batch of batches) {
+      if (remainingNeeded <= 0) break;
+      const batchRemaining = getFgRemaining(db, batch.id);
+      if (batchRemaining > 0) {
+        const take = Math.min(batchRemaining, remainingNeeded);
+        dispatchesToCreate.push({ batch, take });
+        remainingNeeded -= take;
+      }
+    }
+    
+    if (remainingNeeded > 0.000001) throw httpError(409, `Dispatch quantity exceeds available stock for ${baseBatchCode}`);
+  }
 
   return inTransaction(db, () => {
     let lastDispatchId = null;
