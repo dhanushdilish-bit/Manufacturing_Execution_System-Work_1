@@ -199,8 +199,8 @@ export function createApp(db = initDatabase()) {
 
   app.get('/api/feedback/:dispatch_id', (req, res) => {
     const dispatchId = Number(req.params.dispatch_id)
-    const dispatch = db.prepare(`
-      SELECT d.*, fb.batch_code, p.name AS product_name 
+    let dispatch = db.prepare(`
+      SELECT d.*, fb.batch_code, p.name AS product_name, p.code AS product_code
       FROM dispatches d 
       JOIN fg_batches fb ON fb.id = d.batch_id 
       JOIN products p ON p.id = fb.product_id 
@@ -208,6 +208,17 @@ export function createApp(db = initDatabase()) {
     `).get(dispatchId)
     
     if (!dispatch) return res.status(404).json({ error: 'Dispatch not found' })
+
+    const siblings = db.prepare(`
+      SELECT d.quantity
+      FROM dispatches d
+      WHERE d.customer = ? AND d.order_ref = ? AND d.shipped_at = ?
+    `).all(dispatch.customer, dispatch.order_ref, dispatch.shipped_at)
+
+    const totalQty = siblings.reduce((sum, sib) => sum + sib.quantity, 0)
+    dispatch.quantity = totalQty
+    dispatch.batch_code = dispatch.batch_code.replace(/[A-Za-z]$/, '')
+
     const existingFeedback = db.prepare('SELECT * FROM customer_feedback WHERE dispatch_id = ?').get(dispatchId)
     res.json({ dispatch, feedback: existingFeedback || null })
   })
@@ -370,9 +381,11 @@ export function createApp(db = initDatabase()) {
           `
           countSql = `
             SELECT COUNT(*) AS count
-            FROM dispatches d
-            JOIN fg_batches fb ON fb.id = d.batch_id
-            JOIN products p ON p.id = fb.product_id
+            FROM (
+              SELECT 1
+              FROM dispatches d
+              JOIN fg_batches fb ON fb.id = d.batch_id
+              JOIN products p ON p.id = fb.product_id
           `
           if (search) {
             const condition = ` WHERE (d.order_ref LIKE ? OR d.customer LIKE ? OR fb.batch_code LIKE ? OR p.name LIKE ?)`
@@ -381,6 +394,9 @@ export function createApp(db = initDatabase()) {
             const like = `%${search}%`
             searchParams = [like, like, like, like]
           }
+          const groupBy = ` GROUP BY d.customer, d.order_ref, d.shipped_at, RTRIM(fb.batch_code, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ')`
+          baseSql += groupBy
+          countSql += groupBy + `) AS sub`
           break
 
         default:
@@ -1433,11 +1449,11 @@ function qaFgBatch(db, batchId, body, userId) {
 }
 
 function createDispatch(db, body, userId) {
-  const batchId = Number(body.batch_id)
+  const baseBatchCode = body.base_batch_code ? String(body.base_batch_code).trim() : null;
   const quantity = mustNumber(body.quantity, 'Dispatch quantity')
   const customer = String(body.customer || '').trim()
   const orderRef = String(body.order_ref || '').trim()
-  if (!batchId || !customer || !orderRef) throw httpError(400, 'Batch, customer, and order reference are required')
+  if (!baseBatchCode || !customer || !orderRef) throw httpError(400, 'Grouped batch code, customer, and order reference are required')
 
   const transportType = String(body.transport_type || 'OWN').trim()
   const driverName = String(body.driver_name || '').trim() || null
@@ -1446,64 +1462,73 @@ function createDispatch(db, body, userId) {
   const bookingLr = String(body.booking_lr || '').trim() || null
   const customerEmail = String(body.customer_email || '').trim() || null
 
-  const batch = db.prepare('SELECT * FROM fg_batches WHERE id = ?').get(batchId)
-  if (!batch) throw httpError(404, 'FG batch not found')
-  if (!['READY_FOR_DISPATCH', 'PARTIAL_DISPATCH'].includes(batch.status)) throw httpError(400, 'Batch must be ready for dispatch before dispatch')
+  const batches = db.prepare(`SELECT * FROM fg_batches WHERE status IN ('READY_FOR_DISPATCH', 'PARTIAL_DISPATCH') ORDER BY id ASC`).all()
+    .filter(b => b.batch_code === baseBatchCode || (b.batch_code.startsWith(baseBatchCode) && b.batch_code.length === baseBatchCode.length + 1 && /[A-Za-z]/.test(b.batch_code.slice(-1))));
 
-  const remainingQty = getFgRemaining(db, batchId)
-  if (remainingQty + 0.000001 < quantity) throw httpError(409, 'Dispatch quantity exceeds available FG stock')
+  if (batches.length === 0) throw httpError(404, 'No matching FG batches found for dispatch')
+
+  let remainingNeeded = quantity;
+  const dispatchesToCreate = [];
+  
+  for (const batch of batches) {
+    if (remainingNeeded <= 0) break;
+    const batchRemaining = getFgRemaining(db, batch.id);
+    if (batchRemaining > 0) {
+      const take = Math.min(batchRemaining, remainingNeeded);
+      dispatchesToCreate.push({ batch, take });
+      remainingNeeded -= take;
+    }
+  }
+
+  if (remainingNeeded > 0.000001) throw httpError(409, 'Dispatch quantity exceeds combined available FG stock')
 
   return inTransaction(db, () => {
-    const dispatchId = db.prepare(`
-      INSERT INTO dispatches
-        (batch_id, customer, order_ref, quantity, vehicle_no, transport_type, driver_name, driver_phone, courier_name, booking_lr, customer_email, remarks, approved_by, dispatched_by, shipped_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      batchId,
-      customer,
-      orderRef,
-      quantity,
-      body.vehicle_no || null,
-      transportType,
-      driverName,
-      driverPhone,
-      courierName,
-      bookingLr,
-      customerEmail,
-      body.remarks || null,
-      userId,
-      userId,
-      body.shipped_at || nowIso(),
-    ).lastInsertRowid
+    let lastDispatchId = null;
+    let dispatchRecords = [];
 
-    const updatedRemaining = getFgRemaining(db, batchId)
-    db.prepare(`
-      UPDATE fg_batches
-      SET status = ?
-      WHERE id = ?
-    `).run(updatedRemaining <= 0.000001 ? 'DISPATCHED' : 'PARTIAL_DISPATCH', batchId)
+    for (const d of dispatchesToCreate) {
+      lastDispatchId = db.prepare(`
+        INSERT INTO dispatches
+          (batch_id, customer, order_ref, quantity, vehicle_no, transport_type, driver_name, driver_phone, courier_name, booking_lr, customer_email, remarks, approved_by, dispatched_by, shipped_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        d.batch.id,
+        customer,
+        orderRef,
+        d.take,
+        body.vehicle_no || null,
+        transportType,
+        driverName,
+        driverPhone,
+        courierName,
+        bookingLr,
+        customerEmail,
+        body.remarks || null,
+        userId,
+        userId,
+        body.shipped_at || nowIso()
+      ).lastInsertRowid
 
-    const dispatchRecord = db.prepare('SELECT * FROM dispatches WHERE id = ?').get(dispatchId)
+      const updatedRemaining = getFgRemaining(db, d.batch.id)
+      db.prepare(`
+        UPDATE fg_batches
+        SET status = ?
+        WHERE id = ?
+      `).run(updatedRemaining <= 0.000001 ? 'DISPATCHED' : 'PARTIAL_DISPATCH', d.batch.id)
 
-    if (customerEmail && process.env.SMTP_USER) {
-      const product = db.prepare('SELECT p.name, u.code FROM products p JOIN units u ON u.id = p.unit_id WHERE p.id = ?').get(batch.product_id)
+      dispatchRecords.push(db.prepare('SELECT * FROM dispatches WHERE id = ?').get(lastDispatchId))
+    }
+
+    if (customerEmail && process.env.SMTP_USER && dispatchesToCreate.length > 0) {
+      const mainBatch = dispatchesToCreate[0].batch;
+      const product = db.prepare('SELECT p.name, u.code FROM products p JOIN units u ON u.id = p.unit_id WHERE p.id = ?').get(mainBatch.product_id)
       const productName = product.name
       const unitCode = product.code
       const transportDetails = transportType === 'COURIER' 
         ? `Courier: ${courierName || '-'} (LR: ${bookingLr || '-'})`
         : `Vehicle: ${body.vehicle_no || '-'} (Driver: ${driverName || '-'}, Phone: ${driverPhone || '-'})`
         
-      const trace = getTraceability(db, batch.batch_code)
-      const rmList = trace.rawMaterials.map(rm => 
-        `<li style="margin-bottom: 4px;">${rm.material_name} (Lot: ${rm.lot_number}, Supplier: ${rm.supplier})</li>`
-      ).join('')
-      
-      let qcPassDate = 'N/A'
-      if (trace.fgQc && trace.fgQc.length > 0) {
-        qcPassDate = new Date(trace.fgQc[0].checked_at).toLocaleDateString()
-      }
-
-      const feedbackUrl = `https://startling-relocate-deviation.ngrok-free.dev/#/feedback/${dispatchId}`
+      const feedbackUrl = `https://startling-relocate-deviation.ngrok-free.dev/#/feedback/${lastDispatchId}`
       const emailHtml = `
         <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; color: #333;">
           <h2 style="color: #0ea5e9;">Your Order has been Dispatched!</h2>
@@ -1513,15 +1538,15 @@ function createDispatch(db, body, userId) {
           <div style="background: #f8fafc; padding: 15px; border-radius: 8px; margin: 20px 0;">
             <ul style="list-style: none; padding: 0; margin: 0;">
               <li style="margin-bottom: 8px;"><strong>Product:</strong> ${productName}</li>
-              <li style="margin-bottom: 8px;"><strong>Batch:</strong> ${batch.batch_code}</li>
-              <li style="margin-bottom: 8px;"><strong>Quantity:</strong> ${quantity} ${unitCode}</li>
+              <li style="margin-bottom: 8px;"><strong>Batch Group:</strong> ${baseBatchCode}</li>
+              <li style="margin-bottom: 8px;"><strong>Total Quantity:</strong> ${quantity} ${unitCode}</li>
               <li><strong>Transport:</strong> ${transportDetails}</li>
             </ul>
           </div>
 
           <hr style="border: 0; border-top: 1px solid #e2e8f0; margin: 25px 0;" />
           <p style="font-size: 14px; color: #334155; margin-bottom: 15px;">For more details of the Batch, click the link below.</p>
-          <a href="https://startling-relocate-deviation.ngrok-free.dev/#/public-trace/${encodeURIComponent(batch.batch_code)}" style="display: inline-block; background: #0ea5e9; color: #fff; padding: 10px 20px; text-decoration: none; border-radius: 6px; font-weight: bold; margin-bottom: 10px;">Traceability</a>
+          <a href="https://startling-relocate-deviation.ngrok-free.dev/#/public-trace/${encodeURIComponent(mainBatch.batch_code)}" style="display: inline-block; background: #0ea5e9; color: #fff; padding: 10px 20px; text-decoration: none; border-radius: 6px; font-weight: bold; margin-bottom: 10px;">Traceability</a>
           <hr style="border: 0; border-top: 1px solid #e2e8f0; margin: 25px 0;" />
 
           <p>We value your feedback. Please let us know how we did by clicking the link below:</p>
@@ -1540,10 +1565,9 @@ function createDispatch(db, body, userId) {
         .catch(err => console.error('Error sending email:', err))
     }
 
-    return dispatchRecord
+    return dispatchRecords.length > 0 ? dispatchRecords[0] : null
   })
 }
-
 function getFgRemaining(db, batchId) {
   const row = db.prepare(`
     SELECT fb.quantity - COALESCE(SUM(d.quantity), 0) AS remaining_qty
@@ -1556,7 +1580,8 @@ function getFgRemaining(db, batchId) {
 }
 
 function getTraceability(db, batchCode) {
-  const batch = db.prepare(`
+  // Try to find matching batches (either exact match, or base code match)
+  const batches = db.prepare(`
     SELECT fb.*, p.code AS product_code, p.name AS product_name, prun.shift, prun.team_members,
            prun.started_at, prun.ended_at, prun.run_minutes, prun.remarks AS run_remarks, 
            req.source_team, req.requested_qty, req.approved_at, req.remarks AS request_remarks, req.approval_remarks AS request_approval_remarks,
@@ -1570,51 +1595,85 @@ function getTraceability(db, batchCode) {
     LEFT JOIN users approver ON approver.id = req.approved_by
     LEFT JOIN users qc ON qc.id = fb.qc_by
     LEFT JOIN users qa ON qa.id = fb.qa_by
-    WHERE fb.batch_code = ?
-  `).get(batchCode)
-  if (!batch) throw httpError(404, 'Batch code not found')
+    WHERE fb.batch_code = ? OR fb.batch_code LIKE ?
+    ORDER BY fb.id ASC
+  `).all(batchCode, batchCode + '_')
 
-  const rawMaterials = db.prepare(`
-    SELECT pc.*, rr.lot_number, rr.supplier, rr.received_at, rr.qc_at, rr.remarks AS receipt_remarks, rr.qc_remarks AS receipt_qc_remarks,
-           rm.code AS material_code, rm.name AS material_name,
-           qc.name AS rm_qc_by_name
-    FROM production_consumption pc
-    JOIN rm_receipts rr ON rr.id = pc.receipt_id
-    JOIN raw_materials rm ON rm.id = pc.material_id
-    LEFT JOIN users qc ON qc.id = rr.qc_by
-    WHERE pc.run_id = ?
-    ORDER BY rm.code, rr.lot_number
-  `).all(batch.production_run_id)
+  if (batches.length === 0) throw httpError(404, 'Batch code not found')
 
-  const fgQc = db.prepare(`
-    SELECT r.value, r.passed, r.checked_at, p.label, p.type, p.min_value, p.max_value, u.name AS checked_by_name, 'QC' AS stage
-    FROM fg_qc_results r
-    JOIN qc_parameters p ON p.id = r.parameter_id
-    LEFT JOIN users u ON u.id = r.checked_by
-    WHERE r.batch_id = ?
-    UNION ALL
-    SELECT r.value, r.passed, r.checked_at, p.label, p.type, p.min_value, p.max_value, u.name AS checked_by_name, 'QA' AS stage
-    FROM fg_qa_results r
-    JOIN qc_parameters p ON p.id = r.parameter_id
-    LEFT JOIN users u ON u.id = r.checked_by
-    WHERE r.batch_id = ?
-    ORDER BY checked_at DESC
-  `).all(batch.id, batch.id)
+  // Aggregate batch data
+  const mainBatch = { ...batches[0] }
+  mainBatch.batch_code = batchCode; // use requested base code
+  
+  if (batches.length > 1) {
+    mainBatch.quantity = batches.reduce((sum, b) => sum + Number(b.quantity), 0)
+    mainBatch.shift = Array.from(new Set(batches.map(b => b.shift))).join(', ')
+    mainBatch.team_members = Array.from(new Set(batches.map(b => b.team_members))).join(' | ')
+    mainBatch.operator_code = Array.from(new Set(batches.map(b => b.operator_code).filter(Boolean))).join(', ')
+    mainBatch.run_remarks = Array.from(new Set(batches.map(b => b.run_remarks).filter(Boolean))).join(' | ')
+    mainBatch.qc_remarks = Array.from(new Set(batches.map(b => b.qc_remarks).filter(Boolean))).join(' | ')
+    mainBatch.qa_remarks = Array.from(new Set(batches.map(b => b.qa_remarks).filter(Boolean))).join(' | ')
+  }
 
-  const dispatches = db.prepare(`
-    SELECT d.*, approver.name AS approved_by_name, dispatcher.name AS dispatched_by_name,
-           cf.rating AS feedback_rating, cf.comments AS feedback_comments, cf.submitted_at AS feedback_submitted_at
-    FROM dispatches d
-    LEFT JOIN users approver ON approver.id = d.approved_by
-    LEFT JOIN users dispatcher ON dispatcher.id = d.dispatched_by
-    LEFT JOIN customer_feedback cf ON cf.dispatch_id = d.id
-    WHERE d.batch_id = ?
-    ORDER BY d.id
-  `).all(batch.id)
+  let rawMaterials = []
+  let fgQc = []
+  let dispatches = []
 
-  return { batch, rawMaterials, fgQc, dispatches }
+  for (const b of batches) {
+    const rms = db.prepare(`
+      SELECT pc.*, rr.lot_number, rr.supplier, rr.received_at, rr.qc_at, rr.remarks AS receipt_remarks, rr.qc_remarks AS receipt_qc_remarks,
+             rm.code AS material_code, rm.name AS material_name,
+             qc.name AS rm_qc_by_name
+      FROM production_consumption pc
+      JOIN rm_receipts rr ON rr.id = pc.receipt_id
+      JOIN raw_materials rm ON rm.id = pc.material_id
+      LEFT JOIN users qc ON qc.id = rr.qc_by
+      WHERE pc.run_id = ?
+    `).all(b.production_run_id)
+    rawMaterials.push(...rms)
+
+    const qcqa = db.prepare(`
+      SELECT r.value, r.passed, r.checked_at, p.label, p.type, p.min_value, p.max_value, u.name AS checked_by_name, 'QC' AS stage
+      FROM fg_qc_results r
+      JOIN qc_parameters p ON p.id = r.parameter_id
+      LEFT JOIN users u ON u.id = r.checked_by
+      WHERE r.batch_id = ?
+      UNION ALL
+      SELECT r.value, r.passed, r.checked_at, p.label, p.type, p.min_value, p.max_value, u.name AS checked_by_name, 'QA' AS stage
+      FROM fg_qa_results r
+      JOIN qc_parameters p ON p.id = r.parameter_id
+      LEFT JOIN users u ON u.id = r.checked_by
+      WHERE r.batch_id = ?
+      ORDER BY checked_at DESC
+    `).all(b.id, b.id)
+    fgQc.push(...qcqa)
+
+    const disps = db.prepare(`
+      SELECT d.*, approver.name AS approved_by_name, dispatcher.name AS dispatched_by_name,
+             cf.rating AS feedback_rating, cf.comments AS feedback_comments, cf.submitted_at AS feedback_submitted_at
+      FROM dispatches d
+      LEFT JOIN users approver ON approver.id = d.approved_by
+      LEFT JOIN users dispatcher ON dispatcher.id = d.dispatched_by
+      LEFT JOIN customer_feedback cf ON cf.dispatch_id = d.id
+      WHERE d.batch_id = ?
+      ORDER BY d.id
+    `).all(b.id)
+    dispatches.push(...disps)
+  }
+
+  // Deduplicate raw materials by lot_number
+  const rmMap = new Map()
+  for (const rm of rawMaterials) {
+    if (!rmMap.has(rm.lot_number)) {
+      rmMap.set(rm.lot_number, rm)
+    } else {
+      rmMap.get(rm.lot_number).quantity += Number(rm.quantity)
+    }
+  }
+  rawMaterials = Array.from(rmMap.values()).sort((a, b) => a.material_code.localeCompare(b.material_code))
+
+  return { batch: mainBatch, rawMaterials, fgQc, dispatches }
 }
-
 function getDaystoreAvailableRm(db) {
   return db.prepare(`
     SELECT 

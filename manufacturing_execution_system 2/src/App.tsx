@@ -20,6 +20,7 @@ import {
   Warehouse,
   XCircle,
   Dna,
+  PlayCircle,
 } from 'lucide-react'
 import { type FormEvent, type ReactNode, useEffect, useMemo, useState } from 'react'
 
@@ -59,7 +60,7 @@ import { createColumnHelper } from '@tanstack/react-table'
 import { AjaxTable } from './components/AjaxTable'
 import './App.css'
 
-type TabKey = 'dashboard' | 'rm' | 'production' | 'qc_dashboard' | 'qa_dashboard' | 'qc' | 'fg' | 'traceability' | 'users' | 'master'
+type TabKey = 'dashboard' | 'rm' | 'production' | 'production_run' | 'qc_dashboard' | 'qa_dashboard' | 'qc' | 'fg' | 'traceability' | 'users' | 'master'
 type Notice = { type: 'success' | 'error'; message: string } | null
 type QcDraft = Record<number, { value: string; passed: boolean }>
 
@@ -110,6 +111,7 @@ const tabs: Array<{
   { key: 'dashboard', label: 'Dashboard', icon: Activity, roles: ['all'] },
   { key: 'rm', label: 'RM Store', icon: Boxes, roles: ['admin', 'manager', 'rm_store', 'qc', 'qa'] },
   { key: 'production', label: 'Production', icon: Factory, roles: ['admin', 'manager', 'production', 'rm_store', 'production_head'] },
+  { key: 'production_run', label: 'Production Run', icon: PlayCircle, roles: ['admin', 'manager', 'production', 'production_head'] },
   { key: 'qc_dashboard', label: 'QC Dashboard', icon: FlaskConical, roles: ['admin', 'manager', 'qc'] },
   { key: 'qa_dashboard', label: 'QA Dashboard', icon: ClipboardCheck, roles: ['admin', 'manager', 'qa'] },
   { key: 'qc', label: 'Day Store', icon: Warehouse, roles: ['admin', 'manager', 'qc', 'qa', 'production', 'production_head'] },
@@ -364,6 +366,7 @@ function App() {
       if (!roleDef) return false
       try {
         const perms = JSON.parse(roleDef.permissions)
+        if (tab.key === 'production_run' && perms.includes('production')) return true
         return perms.includes(tab.key)
       } catch {
         return false
@@ -616,6 +619,18 @@ function App() {
             submitAction={submitAction}
           />
         )}
+
+        {activeTab === 'production_run' && (
+          <ProductionRunTab
+            runForm={runForm}
+            setRunForm={setRunForm}
+            bootstrap={bootstrap}
+            workflow={workflow}
+            submitAction={submitAction}
+            userRole={user.role}
+          />
+        )}
+
         {activeTab === 'production' && (
           <Production
             onPrintRequest={(req) => { setPrintingRequest(req); setTimeout(() => { window.print(); setTimeout(() => setPrintingRequest(null), 100) }, 100) }}
@@ -1749,6 +1764,330 @@ function QaDashboard({
   )
 }
 
+
+function ProductionRunTab({
+  runForm,
+  setRunForm,
+  bootstrap,
+  workflow,
+  submitAction,
+  userRole,
+}: {
+  runForm: Record<string, any>
+  setRunForm: (value: Record<string, any>) => void
+  bootstrap: BootstrapData
+  workflow: WorkflowData
+  submitAction: <T>(action: Promise<T>, message: string) => Promise<boolean>
+  userRole: string
+}) {
+  const [operator, setOperator] = useState<Employee | null>(null)
+  const [operatorError, setOperatorError] = useState<string>('')
+
+  useEffect(() => {
+    if (runForm.emp_code && runForm.emp_code.length >= 3) {
+      const timer = setTimeout(async () => {
+        try {
+          const emp = await api<Employee>(`/api/employees/${runForm.emp_code}`)
+          setOperator(emp)
+          setOperatorError('')
+        } catch {
+          setOperator(null)
+          setOperatorError('Not found')
+        }
+      }, 500)
+      return () => clearTimeout(timer)
+    } else {
+      setOperator(null)
+      setOperatorError('')
+    }
+  }, [runForm.emp_code])
+
+  const approved = workflow.productionRequests.filter((request) => request.status === 'RM_APPROVED')
+
+  return (
+    <div className="grid-two">
+      {userRole !== 'production_head' && (
+        <section className="panel">
+          <PanelTitle icon={Factory} title="Production Run" />
+        <form
+          className="stack"
+          onSubmit={async (event) => {
+            event.preventDefault()
+
+            const confirmResult = await Swal.fire({
+              title: 'Complete Run',
+              text: 'Are you sure you want to complete this production run?',
+              icon: 'question',
+              showCancelButton: true,
+              confirmButtonText: 'Yes, complete it',
+              cancelButtonText: 'Cancel'
+            })
+            if (!confirmResult.isConfirmed) return
+
+            const success = await submitAction(postJson('/api/production-runs', runForm), 'Batch generated and moved to Day Store')
+            if (success) {
+              setRunForm({
+                request_id: '',
+                emp_code: '',
+                shift: 'A',
+                started_at: toLocalInputValue(new Date()),
+                ended_at: '',
+                quantity_produced: '',
+                runner_waste_kg: '',
+                purge_waste_kg: '',
+                rejected_pieces: '',
+                testing_sample_qty: '',
+                consumption: {},
+              })
+              setOperator(null)
+            }
+          }}
+        >
+          <div className="detail-grid" style={{ gap: '1rem', background: 'var(--surface-sunken)', padding: '1rem', borderRadius: '8px' }}>
+            <label className="span-two">
+              Approved Request (Plan)
+              <select value={runForm.request_id} onChange={(event) => {
+                const reqId = event.target.value
+                const req = approved.find(r => r.id === Number(reqId))
+                const plan = req && req.plan_id ? workflow.productionPlans.find(p => p.id === req.plan_id) : null
+                
+                setRunForm({ 
+                  ...runForm, 
+                  request_id: reqId,
+                  shift: plan?.shift || runForm.shift,
+                  machine_no: plan?.machine_no || runForm.machine_no
+                })
+              }} required>
+                <option value="">Select</option>
+                {approved.map((request) => (
+                  <option key={request.id} value={request.id}>
+                    #{request.id} {request.product_code} - {fmtQty(request.requested_qty)} {request.unit_code}
+                  </option>
+                ))}
+              </select>
+            </label>
+            
+            <label>
+              Shift
+              <select value={runForm.shift} onChange={(event) => setRunForm({ ...runForm, shift: event.target.value })}>
+                <option>A</option>
+                <option>B</option>
+                <option>C</option>
+                <option>DAY</option>
+                <option>NIGHT</option>
+              </select>
+            </label>
+          </div>
+
+          <fieldset style={{ padding: '1rem', border: '1px solid var(--border)', borderRadius: '8px' }}>
+            <legend style={{ padding: '0 0.5rem', fontWeight: 'bold' }}>Operator Details</legend>
+            <div className="form-grid">
+              <label>
+                Emp Code
+                <input 
+                  value={runForm.emp_code} 
+                  onChange={(e) => setRunForm({ ...runForm, emp_code: e.target.value })} 
+                  placeholder="e.g. EMP001"
+                  list="employee-suggestions"
+                  required 
+                />
+                <datalist id="employee-suggestions">
+                  {bootstrap.employees.filter(e => e.active).map(emp => (
+                    <option key={emp.emp_code} value={emp.emp_code}>
+                      {emp.name} {emp.gender ? `(${emp.gender})` : ''}
+                    </option>
+                  ))}
+                </datalist>
+              </label>
+              <label>
+                Machine NO
+                <input 
+                  value={runForm.machine_no} 
+                  onChange={(e) => setRunForm({ ...runForm, machine_no: e.target.value })} 
+                  placeholder="e.g. M1-02"
+                />
+              </label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                {operator ? (
+                  <>
+                    {operator.photo_url && <img src={operator.photo_url} alt="Profile" style={{ width: '40px', height: '40px', borderRadius: '50%', objectFit: 'cover' }} />}
+                    <div style={{ lineHeight: 1.2 }}>
+                      <strong>{operator.name}</strong><br/>
+                      <small style={{ color: 'var(--text-muted)' }}>{operator.gender}</small>
+                    </div>
+                  </>
+                ) : (
+                  <div style={{ color: operatorError ? 'var(--danger)' : 'var(--text-muted)', display: 'flex', alignItems: 'center', height: '40px' }}>
+                    {operatorError || 'Type code to load details...'}
+                  </div>
+                )}
+              </div>
+            </div>
+          </fieldset>
+
+          <fieldset style={{ padding: '1rem', border: '1px solid var(--border)', borderRadius: '8px' }}>
+            <legend style={{ padding: '0 0.5rem', fontWeight: 'bold' }}>Time Details</legend>
+            <div className="form-grid">
+              <label>
+                Start Date/Time
+                <input
+                  type="datetime-local"
+                  value={runForm.started_at}
+                  onChange={(event) => setRunForm({ ...runForm, started_at: event.target.value })}
+                  required
+                />
+              </label>
+              <label>
+                End Date/Time
+                <input type="datetime-local" value={runForm.ended_at} onChange={(event) => setRunForm({ ...runForm, ended_at: event.target.value })} required />
+              </label>
+            </div>
+          </fieldset>
+
+          <fieldset style={{ padding: '1rem', border: '1px solid var(--border)', borderRadius: '8px' }}>
+            <legend style={{ padding: '0 0.5rem', fontWeight: 'bold' }}>Produced Quantity Breakdown</legend>
+            <div className="form-grid">
+              <label>
+                Good Pieces Produced
+                <input
+                  min="1"
+                  step="1"
+                  type="number"
+                  value={runForm.quantity_produced}
+                  onChange={(event) => {
+                    const val = event.target.value
+                    const numVal = Number(val)
+                    const req = approved.find((r) => r.id === Number(runForm.request_id))
+                    let rejected = runForm.rejected_pieces
+                    if (req && !isNaN(numVal) && val !== '') {
+                      const diff = Math.max(0, req.requested_qty - numVal)
+                      rejected = String(Math.floor(diff))
+                    }
+                    setRunForm({ ...runForm, quantity_produced: val, rejected_pieces: rejected })
+                  }}
+                  required
+                />
+              </label>
+              <label>
+                Runner Waste (kg)
+                <input
+                  min="0"
+                  step="0.01"
+                  type="number"
+                  value={runForm.runner_waste_kg}
+                  onChange={(event) => setRunForm({ ...runForm, runner_waste_kg: event.target.value })}
+                />
+              </label>
+              <label>
+                Purge Waste (kg)
+                <input
+                  min="0"
+                  step="0.01"
+                  type="number"
+                  value={runForm.purge_waste_kg}
+                  onChange={(event) => setRunForm({ ...runForm, purge_waste_kg: event.target.value })}
+                />
+              </label>
+              <label>
+                Rejected Pieces
+                <input
+                  min="0"
+                  step="1"
+                  type="number"
+                  value={runForm.rejected_pieces}
+                  onChange={(event) => setRunForm({ ...runForm, rejected_pieces: event.target.value })}
+                />
+              </label>
+              <label>
+                Testing Sample Qty
+                <input
+                  min="0"
+                  step="1"
+                  type="number"
+                  value={runForm.testing_sample_qty}
+                  onChange={(event) => setRunForm({ ...runForm, testing_sample_qty: event.target.value })}
+                />
+              </label>
+            </div>
+          </fieldset>
+
+          {runForm.request_id && (
+            <fieldset style={{ padding: '1rem', border: '1px solid var(--border)', borderRadius: '8px' }}>
+              <legend style={{ padding: '0 0.5rem', fontWeight: 'bold' }}>Raw Materials Used (From Daystore)</legend>
+              <table style={{ margin: 0 }}>
+                <thead>
+                  <tr>
+                    <th>Material</th>
+                    <th>Available in Daystore</th>
+                    <th>Actual Used</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(() => {
+                    const req = approved.find((r) => r.id === Number(runForm.request_id));
+                    const bomMaterialIds = req 
+                      ? bootstrap.bomItems.filter(b => b.product_id === req.product_id).map(b => b.raw_material_id)
+                      : [];
+                    const relevantInventory = workflow.daystoreInventory.filter(inv => bomMaterialIds.includes(inv.material_id));
+                    
+                    if (relevantInventory.length === 0) {
+                      return <tr><td colSpan={3} className="empty">No required materials available in Daystore</td></tr>;
+                    }
+
+                    return relevantInventory.map(inv => (
+                      <tr key={inv.receipt_id}>
+                        <td>{inv.material_code} - {inv.material_name} (Lot #{inv.lot_number})</td>
+                        <td>{fmtQty(inv.available_qty)} {inv.unit_code}</td>
+                        <td>
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.001"
+                            max={inv.available_qty}
+                            value={runForm.consumption[inv.receipt_id] ?? ''}
+                            onChange={(e) => setRunForm({
+                              ...runForm,
+                              consumption: {
+                                ...runForm.consumption,
+                                [inv.receipt_id]: e.target.value
+                              }
+                            })}
+                            style={{ width: '120px' }}
+                            placeholder={`Max: ${fmtQty(inv.available_qty)}`}
+                          />
+                        </td>
+                      </tr>
+                    ));
+                  })()}
+                </tbody>
+              </table>
+              <small style={{ color: 'var(--text-muted)' }}>* Enter the exact quantities consumed from Daystore inventory.</small>
+            </fieldset>
+          )}
+
+          <label>
+            Remarks
+            <textarea value={runForm.remarks || ''} onChange={(event) => setRunForm({ ...runForm, remarks: event.target.value })} />
+          </label>
+
+          <button className="primary-button" type="submit" disabled={!!runForm.emp_code && !operator}>
+            <PackageCheck size={18} />
+            Complete Run
+          </button>
+        </form>
+      </section>
+      )}
+
+      {userRole !== 'production_head' && (
+      <section className="panel wide">
+        <PanelTitle icon={ClipboardCheck} title="Production History" />
+        <AjaxTable resource="production-runs" columns={runColumns} />
+      </section>
+      )}
+    </div>
+  )
+}
+
 function Production({
   onPrintRequest,
   targetForm,
@@ -1778,28 +2117,8 @@ function Production({
   submitAction: <T>(action: Promise<T>, message: string) => Promise<boolean>
   userRole: string
 }) {
-  const [operator, setOperator] = useState<Employee | null>(null)
-  const [operatorError, setOperatorError] = useState<string>('')
   const [approvalRemarks, setApprovalRemarks] = useState<Record<number, string>>({})
 
-  useEffect(() => {
-    if (runForm.emp_code && runForm.emp_code.length >= 3) {
-      const timer = setTimeout(async () => {
-        try {
-          const emp = await api<Employee>(`/api/employees/${runForm.emp_code}`)
-          setOperator(emp)
-          setOperatorError('')
-        } catch {
-          setOperator(null)
-          setOperatorError('Not found')
-        }
-      }, 500)
-      return () => clearTimeout(timer)
-    } else {
-      setOperator(null)
-      setOperatorError('')
-    }
-  }, [runForm.emp_code])
 
   const pendingApproval = workflow.productionRequests.filter((request) => ['PENDING_QC', 'PENDING_QA', 'PENDING_RM_APPROVAL'].includes(request.status))
   const approved = workflow.productionRequests.filter((request) => request.status === 'RM_APPROVED')
@@ -2318,284 +2637,6 @@ function Production({
         </section>
       )}
 
-      {userRole !== 'production_head' && (
-        <section className="panel">
-          <PanelTitle icon={Factory} title="Production Run" />
-        <form
-          className="stack"
-          onSubmit={async (event) => {
-            event.preventDefault()
-
-            const confirmResult = await Swal.fire({
-              title: 'Complete Run',
-              text: 'Are you sure you want to complete this production run?',
-              icon: 'question',
-              showCancelButton: true,
-              confirmButtonText: 'Yes, complete it',
-              cancelButtonText: 'Cancel'
-            })
-            if (!confirmResult.isConfirmed) return
-
-            const success = await submitAction(postJson('/api/production-runs', runForm), 'Batch generated and moved to Day Store')
-            if (success) {
-              setRunForm({
-                request_id: '',
-                emp_code: '',
-                shift: 'A',
-                started_at: toLocalInputValue(new Date()),
-                ended_at: '',
-                quantity_produced: '',
-                runner_waste_kg: '',
-                purge_waste_kg: '',
-                rejected_pieces: '',
-                testing_sample_qty: '',
-                consumption: {},
-              })
-              setOperator(null)
-            }
-          }}
-        >
-          <div className="detail-grid" style={{ gap: '1rem', background: 'var(--surface-sunken)', padding: '1rem', borderRadius: '8px' }}>
-            <label className="span-two">
-              Approved Request (Plan)
-              <select value={runForm.request_id} onChange={(event) => {
-                const reqId = event.target.value
-                const req = approved.find(r => r.id === Number(reqId))
-                const plan = req && req.plan_id ? workflow.productionPlans.find(p => p.id === req.plan_id) : null
-                
-                setRunForm({ 
-                  ...runForm, 
-                  request_id: reqId,
-                  shift: plan?.shift || runForm.shift,
-                  machine_no: plan?.machine_no || runForm.machine_no
-                })
-              }} required>
-                <option value="">Select</option>
-                {approved.map((request) => (
-                  <option key={request.id} value={request.id}>
-                    #{request.id} {request.product_code} - {fmtQty(request.requested_qty)} {request.unit_code}
-                  </option>
-                ))}
-              </select>
-            </label>
-            
-            <label>
-              Shift
-              <select value={runForm.shift} onChange={(event) => setRunForm({ ...runForm, shift: event.target.value })}>
-                <option>A</option>
-                <option>B</option>
-                <option>C</option>
-                <option>DAY</option>
-                <option>NIGHT</option>
-              </select>
-            </label>
-          </div>
-
-          <fieldset style={{ padding: '1rem', border: '1px solid var(--border)', borderRadius: '8px' }}>
-            <legend style={{ padding: '0 0.5rem', fontWeight: 'bold' }}>Operator Details</legend>
-            <div className="form-grid">
-              <label>
-                Emp Code
-                <input 
-                  value={runForm.emp_code} 
-                  onChange={(e) => setRunForm({ ...runForm, emp_code: e.target.value })} 
-                  placeholder="e.g. EMP001"
-                  list="employee-suggestions"
-                  required 
-                />
-                <datalist id="employee-suggestions">
-                  {bootstrap.employees.filter(e => e.active).map(emp => (
-                    <option key={emp.emp_code} value={emp.emp_code}>
-                      {emp.name} {emp.gender ? `(${emp.gender})` : ''}
-                    </option>
-                  ))}
-                </datalist>
-              </label>
-              <label>
-                Machine NO
-                <input 
-                  value={runForm.machine_no} 
-                  onChange={(e) => setRunForm({ ...runForm, machine_no: e.target.value })} 
-                  placeholder="e.g. M1-02"
-                />
-              </label>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-                {operator ? (
-                  <>
-                    {operator.photo_url && <img src={operator.photo_url} alt="Profile" style={{ width: '40px', height: '40px', borderRadius: '50%', objectFit: 'cover' }} />}
-                    <div style={{ lineHeight: 1.2 }}>
-                      <strong>{operator.name}</strong><br/>
-                      <small style={{ color: 'var(--text-muted)' }}>{operator.gender}</small>
-                    </div>
-                  </>
-                ) : (
-                  <div style={{ color: operatorError ? 'var(--danger)' : 'var(--text-muted)', display: 'flex', alignItems: 'center', height: '40px' }}>
-                    {operatorError || 'Type code to load details...'}
-                  </div>
-                )}
-              </div>
-            </div>
-          </fieldset>
-
-          <fieldset style={{ padding: '1rem', border: '1px solid var(--border)', borderRadius: '8px' }}>
-            <legend style={{ padding: '0 0.5rem', fontWeight: 'bold' }}>Time Details</legend>
-            <div className="form-grid">
-              <label>
-                Start Date/Time
-                <input
-                  type="datetime-local"
-                  value={runForm.started_at}
-                  onChange={(event) => setRunForm({ ...runForm, started_at: event.target.value })}
-                  required
-                />
-              </label>
-              <label>
-                End Date/Time
-                <input type="datetime-local" value={runForm.ended_at} onChange={(event) => setRunForm({ ...runForm, ended_at: event.target.value })} required />
-              </label>
-            </div>
-          </fieldset>
-
-          <fieldset style={{ padding: '1rem', border: '1px solid var(--border)', borderRadius: '8px' }}>
-            <legend style={{ padding: '0 0.5rem', fontWeight: 'bold' }}>Produced Quantity Breakdown</legend>
-            <div className="form-grid">
-              <label>
-                Good Pieces Produced
-                <input
-                  min="1"
-                  step="1"
-                  type="number"
-                  value={runForm.quantity_produced}
-                  onChange={(event) => {
-                    const val = event.target.value
-                    const numVal = Number(val)
-                    const req = approved.find((r) => r.id === Number(runForm.request_id))
-                    let rejected = runForm.rejected_pieces
-                    if (req && !isNaN(numVal) && val !== '') {
-                      const diff = Math.max(0, req.requested_qty - numVal)
-                      rejected = String(Math.floor(diff))
-                    }
-                    setRunForm({ ...runForm, quantity_produced: val, rejected_pieces: rejected })
-                  }}
-                  required
-                />
-              </label>
-              <label>
-                Runner Waste (kg)
-                <input
-                  min="0"
-                  step="0.01"
-                  type="number"
-                  value={runForm.runner_waste_kg}
-                  onChange={(event) => setRunForm({ ...runForm, runner_waste_kg: event.target.value })}
-                />
-              </label>
-              <label>
-                Purge Waste (kg)
-                <input
-                  min="0"
-                  step="0.01"
-                  type="number"
-                  value={runForm.purge_waste_kg}
-                  onChange={(event) => setRunForm({ ...runForm, purge_waste_kg: event.target.value })}
-                />
-              </label>
-              <label>
-                Rejected Pieces
-                <input
-                  min="0"
-                  step="1"
-                  type="number"
-                  value={runForm.rejected_pieces}
-                  onChange={(event) => setRunForm({ ...runForm, rejected_pieces: event.target.value })}
-                />
-              </label>
-              <label>
-                Testing Sample Qty
-                <input
-                  min="0"
-                  step="1"
-                  type="number"
-                  value={runForm.testing_sample_qty}
-                  onChange={(event) => setRunForm({ ...runForm, testing_sample_qty: event.target.value })}
-                />
-              </label>
-            </div>
-          </fieldset>
-
-          {runForm.request_id && (
-            <fieldset style={{ padding: '1rem', border: '1px solid var(--border)', borderRadius: '8px' }}>
-              <legend style={{ padding: '0 0.5rem', fontWeight: 'bold' }}>Raw Materials Used (From Daystore)</legend>
-              <table style={{ margin: 0 }}>
-                <thead>
-                  <tr>
-                    <th>Material</th>
-                    <th>Available in Daystore</th>
-                    <th>Actual Used</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {(() => {
-                    const req = approved.find((r) => r.id === Number(runForm.request_id));
-                    const bomMaterialIds = req 
-                      ? bootstrap.bomItems.filter(b => b.product_id === req.product_id).map(b => b.raw_material_id)
-                      : [];
-                    const relevantInventory = workflow.daystoreInventory.filter(inv => bomMaterialIds.includes(inv.material_id));
-                    
-                    if (relevantInventory.length === 0) {
-                      return <tr><td colSpan={3} className="empty">No required materials available in Daystore</td></tr>;
-                    }
-
-                    return relevantInventory.map(inv => (
-                      <tr key={inv.receipt_id}>
-                        <td>{inv.material_code} - {inv.material_name} (Lot #{inv.lot_number})</td>
-                        <td>{fmtQty(inv.available_qty)} {inv.unit_code}</td>
-                        <td>
-                          <input
-                            type="number"
-                            min="0"
-                            step="0.001"
-                            max={inv.available_qty}
-                            value={runForm.consumption[inv.receipt_id] ?? ''}
-                            onChange={(e) => setRunForm({
-                              ...runForm,
-                              consumption: {
-                                ...runForm.consumption,
-                                [inv.receipt_id]: e.target.value
-                              }
-                            })}
-                            style={{ width: '120px' }}
-                            placeholder={`Max: ${fmtQty(inv.available_qty)}`}
-                          />
-                        </td>
-                      </tr>
-                    ));
-                  })()}
-                </tbody>
-              </table>
-              <small style={{ color: 'var(--text-muted)' }}>* Enter the exact quantities consumed from Daystore inventory.</small>
-            </fieldset>
-          )}
-
-          <label>
-            Remarks
-            <textarea value={runForm.remarks || ''} onChange={(event) => setRunForm({ ...runForm, remarks: event.target.value })} />
-          </label>
-
-          <button className="primary-button" type="submit" disabled={!!runForm.emp_code && !operator}>
-            <PackageCheck size={18} />
-            Complete Run
-          </button>
-        </form>
-      </section>
-      )}
-
-      {userRole !== 'production_head' && (
-      <section className="panel wide">
-        <PanelTitle icon={ClipboardCheck} title="Production History" />
-        <AjaxTable resource="production-runs" columns={runColumns} />
-      </section>
-      )}
     </div>
   )
 }
@@ -2723,7 +2764,22 @@ function FgAndDispatch({
 }) {
   const available = batches.filter((batch) => ['READY_FOR_DISPATCH', 'PARTIAL_DISPATCH'].includes(batch.status) && Number(batch.remaining_qty) > 0)
   const transportType = form.transport_type || 'OWN'
-  const selectedBatch = available.find((b) => String(b.id) === form.batch_id)
+  
+  const getBaseCode = (code: string) => code.replace(/[A-Za-z]$/, '')
+
+  const groupedAvailable = useMemo(() => {
+    const groups = new Map<string, { base_code: string, remaining_qty: number, unit_code: string }>()
+    available.forEach(batch => {
+      const baseCode = getBaseCode(batch.batch_code)
+      if (!groups.has(baseCode)) {
+        groups.set(baseCode, { base_code: baseCode, remaining_qty: 0, unit_code: batch.unit_code })
+      }
+      groups.get(baseCode)!.remaining_qty += Number(batch.remaining_qty)
+    })
+    return Array.from(groups.values())
+  }, [available])
+
+  const selectedGroup = groupedAvailable.find((g) => g.base_code === form.base_batch_code)
 
   return (
     <div className="grid-two">
@@ -2748,11 +2804,11 @@ function FgAndDispatch({
         >
           <label className="span-two">
             FG batch
-            <select value={form.batch_id} onChange={(event) => setForm({ ...form, batch_id: event.target.value })} required>
+            <select value={form.base_batch_code || ''} onChange={(event) => setForm({ ...form, base_batch_code: event.target.value })} required>
               <option value="">Select</option>
-              {available.map((batch) => (
-                <option key={batch.id} value={batch.id}>
-                  {batch.batch_code} - {fmtQty(batch.remaining_qty)} {batch.unit_code}
+              {groupedAvailable.map((group) => (
+                <option key={group.base_code} value={group.base_code}>
+                  {group.base_code} - {fmtQty(group.remaining_qty)} {group.unit_code}
                 </option>
               ))}
             </select>
@@ -2786,7 +2842,7 @@ function FgAndDispatch({
             />
           </label>
           <label>
-            Quantity {selectedBatch ? `(${selectedBatch.unit_code})` : ''}
+            Quantity {selectedGroup ? `(${selectedGroup.unit_code})` : ''}
             <input
               min="0.001"
               step="0.001"
