@@ -269,7 +269,7 @@ export function createApp(db = initDatabase()) {
     const feedbackId = db.prepare(`
       INSERT INTO customer_feedback (dispatch_id, rating, comments)
       VALUES (?, ?, ?)
-    `).run(dispatchId, 5, 'Manually marked as completed by Admin.').lastInsertRowid
+    `).run(dispatchId, 1, 'Manually marked as completed by Admin.').lastInsertRowid
 
     res.status(201).json({ success: true, id: feedbackId })
   })

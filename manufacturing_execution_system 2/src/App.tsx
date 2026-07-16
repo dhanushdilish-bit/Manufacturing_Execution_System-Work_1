@@ -2215,7 +2215,15 @@ function Production({
                 cancelButtonText: 'Cancel'
               })
               if (result.isConfirmed) {
-                submitAction(postJson('/api/production-targets', targetForm), 'Production target created')
+                const success = await submitAction(postJson('/api/production-targets', targetForm), 'Production target created')
+                if (success) {
+                  setTargetForm({
+                    product_id: '',
+                    target_qty: '',
+                    start_date: '',
+                    end_date: '',
+                  })
+                }
               }
             }}
           >
@@ -2346,7 +2354,17 @@ function Production({
               return
             }
 
-            submitAction(postJson('/api/production-plans', { ...planForm, shift, batch_number: batchNumber, product_id: productId }), 'Production plan created')
+            const success = await submitAction(postJson('/api/production-plans', { ...planForm, shift, batch_number: batchNumber, product_id: productId }), 'Production plan created')
+            if (success) {
+              setPlanForm({
+                target_id: '',
+                product_id: '',
+                planned_qty: '',
+                plan_date: planForm.plan_date,
+                shift: 'A',
+                machine_no: '',
+              })
+            }
           }}
         >
           <label className="span-two">
@@ -2799,7 +2817,10 @@ function FgAndDispatch({
             })
             if (!confirmResult.isConfirmed) return
 
-            submitAction(postJson('/api/dispatches', { ...form, transport_type: transportType }), 'Dispatch logged')
+            const success = await submitAction(postJson('/api/dispatches', { ...form, transport_type: transportType }), 'Dispatch logged')
+            if (success) {
+              setForm({})
+            }
           }}
         >
           <label className="span-two">
