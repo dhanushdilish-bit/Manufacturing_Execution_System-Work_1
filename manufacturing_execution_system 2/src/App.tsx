@@ -4613,19 +4613,21 @@ function PrintLogSheet({ batch }: { batch: any }) {
 function PrintCoverSlip({ batch }: { batch: any }) {
   return (
     <div className="print-container">
-      <div className="print-sticker-slip">
-        <div className="stamp-area">QA</div>
-        <div className="item-code">{batch.product_code}</div>
-        <div className="meta-row">
-          <div className="meta-label">BATCH NO:</div>
-          <div>{batch.batch_code}</div>
+      <div className="print-sticker-slip" style={{ padding: '24px', fontFamily: 'sans-serif', width: '400px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+        <div style={{ textAlign: 'center', fontSize: '32px', fontWeight: 'bold', letterSpacing: '2px', alignSelf: 'center', marginBottom: '8px' }}>
+          {batch.product_code}
         </div>
-        <div className="meta-row">
-          <div className="meta-label">QTY:</div>
-          <div>{batch.quantity}</div>
+        <div style={{ fontSize: '20px', display: 'flex', gap: '8px' }}>
+          <span>BATCH NO:</span> <span>{batch.batch_code}</span>
         </div>
-        <div className="box-bottom">
-          <div style={{ color: '#22c55e', fontSize: '10px' }}>[Green Color Stamp Area]</div>
+        <div style={{ fontSize: '20px', textTransform: 'uppercase', display: 'flex', gap: '8px' }}>
+          <span>PRODUCT-</span> <span>{batch.product_name}</span>
+        </div>
+        <div style={{ fontSize: '20px' }}>
+          CASE NO - 1/1
+        </div>
+        <div style={{ fontSize: '20px' }}>
+          QTY-{batch.quantity} {batch.unit_code || 'PCS'}
         </div>
       </div>
     </div>
@@ -4635,19 +4637,24 @@ function PrintCoverSlip({ batch }: { batch: any }) {
 function PrintCartonSlip({ dispatch }: { dispatch: any }) {
   return (
     <div className="print-container">
-      <div className="print-sticker-slip">
-        <div className="item-code">{dispatch.product_code}</div>
-        <div className="meta-row">
-          <div className="meta-label">Batch Nos:</div>
-          <div>{dispatch.batch_code}</div>
+      <div className="print-sticker-slip" style={{ padding: '24px', fontFamily: 'sans-serif', width: '400px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+        <div style={{ textAlign: 'center', fontSize: '32px', fontWeight: 'bold', letterSpacing: '2px', alignSelf: 'center', marginBottom: '8px' }}>
+          {dispatch.product_code}
         </div>
-        <div className="meta-row">
-          <div className="meta-label">QTY:</div>
-          <div>{dispatch.quantity}</div>
+        <div style={{ textAlign: 'center', fontSize: '20px', display: 'flex', justifyContent: 'center', gap: '8px', marginBottom: '24px' }}>
+          <span>BATCH NO:</span> <span>{dispatch.batch_code}</span>
         </div>
-        <div className="meta-row">
-          <div className="meta-label">P.O. No.:</div>
-          <div>{dispatch.order_ref}</div>
+        <div style={{ fontSize: '24px', textTransform: 'uppercase', display: 'flex', gap: '8px', marginBottom: '16px' }}>
+          <span>TOTAL QTY-</span> <span>{dispatch.quantity} {dispatch.unit_code || 'PCS'}</span>
+        </div>
+        <div style={{ fontSize: '24px', display: 'flex', gap: '8px', marginBottom: '16px' }}>
+          <span>ITEM CODE:</span> <span>-</span>
+        </div>
+        <div style={{ fontSize: '24px', display: 'flex', gap: '8px', marginBottom: '8px' }}>
+          <span>P.O NO:</span> <span>{dispatch.order_ref}</span>
+        </div>
+        <div style={{ fontSize: '20px', display: 'flex', gap: '8px' }}>
+          <span>INVOICE NO :</span> <span>-</span>
         </div>
       </div>
     </div>
