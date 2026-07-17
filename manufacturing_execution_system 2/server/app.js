@@ -371,8 +371,8 @@ export function createApp(db = initDatabase()) {
 
         case 'dispatches':
           baseSql = `
-            SELECT d.*, fb.batch_code, p.code AS product_code, p.name AS product_name,
-                   approver.name AS approved_by_name, dispatcher.name AS dispatched_by_name
+          SELECT d.*, SUM(d.quantity) AS quantity, RTRIM(fb.batch_code, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ') AS batch_code, p.code AS product_code, p.name AS product_name,
+          approver.name AS approved_by_name, dispatcher.name AS dispatched_by_name
             FROM dispatches d
             JOIN fg_batches fb ON fb.id = d.batch_id
             JOIN products p ON p.id = fb.product_id
@@ -1332,7 +1332,7 @@ function createProductionRun(db, body, userId) {
       VALUES (?, ?, ?, ?, ?, ?)
     `)
     for (const allocation of allocations) {
-      const override = consumptionOverrides[allocation.id] ?? consumptionOverrides[String(allocation.id)]
+      const override = consumptionOverrides[allocation.receipt_id] ?? consumptionOverrides[String(allocation.receipt_id)]
       const actualQty = override === undefined ? allocation.quantity : Number(override)
       if (!Number.isFinite(actualQty) || actualQty < 0 || actualQty > allocation.quantity + 0.000001) {
         throw httpError(400, 'Actual RM consumption cannot exceed approved issue quantity')
@@ -1532,6 +1532,9 @@ function createDispatch(db, body, userId) {
       const transportDetails = transportType === 'COURIER' 
         ? `Courier: ${courierName || '-'} (LR: ${bookingLr || '-'})`
         : `Vehicle: ${body.vehicle_no || '-'} (Driver: ${driverName || '-'}, Phone: ${driverPhone || '-'})`
+      
+      const allBatchCodes = Array.from(new Set(dispatchesToCreate.map(d => d.batch.batch_code.replace(/[A-Za-z]$/, '')))).join(', ');
+      const totalQuantity = dispatchesToCreate.reduce((sum, d) => sum + Number(d.take), 0);
         
       const feedbackUrl = `https://startling-relocate-deviation.ngrok-free.dev/#/feedback/${lastDispatchId}`
       const emailHtml = `
@@ -1543,8 +1546,8 @@ function createDispatch(db, body, userId) {
           <div style="background: #f8fafc; padding: 15px; border-radius: 8px; margin: 20px 0;">
             <ul style="list-style: none; padding: 0; margin: 0;">
               <li style="margin-bottom: 8px;"><strong>Product:</strong> ${productName}</li>
-              <li style="margin-bottom: 8px;"><strong>Batch Group:</strong> ${baseBatchCode}</li>
-              <li style="margin-bottom: 8px;"><strong>Total Quantity:</strong> ${quantity} ${unitCode}</li>
+              <li style="margin-bottom: 8px;"><strong>Batch Group:</strong> ${allBatchCodes}</li>
+              <li style="margin-bottom: 8px;"><strong>Total Quantity:</strong> ${totalQuantity} ${unitCode}</li>
               <li><strong>Transport:</strong> ${transportDetails}</li>
             </ul>
           </div>
@@ -1650,7 +1653,7 @@ function getTraceability(db, batchCode) {
       LEFT JOIN users u ON u.id = r.checked_by
       WHERE r.batch_id = ?
       ORDER BY checked_at DESC
-    `).all(b.id, b.id)
+    `).all(b.id, b.id).map(r => ({ ...r, batch_code: b.batch_code }))
     fgQc.push(...qcqa)
 
     const disps = db.prepare(`
@@ -1705,7 +1708,7 @@ function getDaystoreInventory(db) {
       rr.lot_number,
       rr.supplier,
       SUM(di.quantity) as total_transferred,
-      SUM(di.quantity) - IFNULL((SELECT SUM(actual_qty) FROM production_consumption WHERE receipt_id = di.receipt_id AND daystore_inventory_id IS NOT NULL), 0) as available_qty
+      SUM(di.quantity) - IFNULL((SELECT SUM(actual_qty) FROM production_consumption WHERE receipt_id = di.receipt_id), 0) as available_qty
     FROM daystore_inventory di
     JOIN raw_materials rm ON rm.id = di.material_id
     JOIN units u ON u.id = rm.unit_id

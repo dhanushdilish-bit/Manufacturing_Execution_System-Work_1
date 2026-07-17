@@ -2809,6 +2809,21 @@ function FgAndDispatch({
           className="form-grid"
           onSubmit={async (event) => {
             event.preventDefault()
+            
+            if (selectedBatches.length === 0) {
+              Swal.fire('Error', 'Please select at least one batch from the FG Store.', 'error')
+              return
+            }
+            const items = selectedBatches.map(code => ({
+               base_batch_code: code,
+               quantity: Number(batchQuantities[code] || 0)
+            })).filter(i => i.quantity > 0)
+
+            if (items.length === 0) {
+              Swal.fire('Error', 'Please enter a valid quantity for the selected batches.', 'error')
+              return
+            }
+            
             const confirmResult = await Swal.fire({
               title: 'Release Dispatch',
               text: 'Are you sure you want to release this dispatch?',
@@ -2819,9 +2834,11 @@ function FgAndDispatch({
             })
             if (!confirmResult.isConfirmed) return
 
-            const success = await submitAction(postJson('/api/dispatches', { ...form, transport_type: transportType }), 'Dispatch logged')
+            const success = await submitAction(postJson('/api/dispatches', { ...form, transport_type: transportType, batches: items }), 'Dispatch logged')
             if (success) {
               setForm({})
+              setSelectedBatches([])
+              setBatchQuantities({})
             }
           }}
         >
@@ -2840,7 +2857,7 @@ function FgAndDispatch({
                 </thead>
                 <tbody>
                   {selectedBatches.map(code => {
-                    const group = groupedAvailable.find(g => g.batch_code === code)
+                    const group = available.find(g => (g.batch_code || g.base_code) === code)
                     return (
                       <tr key={code} style={{ borderBottom: '1px solid #f1f5f9' }}>
                         <td style={{ padding: '8px 0', fontWeight: 'bold' }}>{code}</td>
@@ -2949,7 +2966,7 @@ function FgAndDispatch({
       <section className="panel">
         <PanelTitle icon={PackageCheck} title="FG Store" />
         <BatchTable 
-          batches={groupedAvailable} 
+          batches={available} 
           selectedCodes={selectedBatches}
           onSelect={(code, checked) => {
             if (checked) {
@@ -3991,6 +4008,7 @@ function BatchTable({
     <table>
       <thead>
         <tr>
+          {onSelect && <th>Batch Selection</th>}
           <th>Batch</th>
           <th>Product</th>
           <th>Qty</th>
@@ -4006,6 +4024,7 @@ function BatchTable({
               <td>
                 <input 
                   type="checkbox" 
+                  style={{ width: '16px', height: '16px', cursor: 'pointer', margin: 0, padding: 0, boxShadow: 'none' }}
                   checked={selectedCodes.includes(batch.batch_code || batch.base_code)}
                   onChange={(e) => onSelect(batch.batch_code || batch.base_code, e.target.checked)}
                 />
