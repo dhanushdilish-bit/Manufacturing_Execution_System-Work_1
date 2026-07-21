@@ -11,6 +11,7 @@ import {
   Plus,
   RefreshCw,
   Search,
+  Target,
   Send,
   Settings,
   Printer,
@@ -60,7 +61,7 @@ import { createColumnHelper } from '@tanstack/react-table'
 import { AjaxTable } from './components/AjaxTable'
 import './App.css'
 
-type TabKey = 'dashboard' | 'rm' | 'production' | 'production_run' | 'qc_dashboard' | 'qa_dashboard' | 'qc' | 'fg' | 'traceability' | 'users' | 'master'
+type TabKey = 'production_target' | 'dashboard' | 'rm' | 'production' | 'production_run' | 'qc_dashboard' | 'qa_dashboard' | 'qc' | 'fg' | 'traceability' | 'users' | 'master'
 type Notice = { type: 'success' | 'error'; message: string } | null
 type QcDraft = Record<number, { value: string; passed: boolean }>
 
@@ -108,6 +109,7 @@ const tabs: Array<{
   icon: typeof Activity
   roles: string[]
 }> = [
+  { key: 'production_target', label: 'Production Target', icon: Target, roles: ['admin'] },
   { key: 'dashboard', label: 'Dashboard', icon: Activity, roles: ['all'] },
   { key: 'rm', label: 'RM Store', icon: Boxes, roles: ['admin', 'manager', 'rm_store', 'qc', 'qa'] },
   { key: 'production', label: 'Production', icon: Factory, roles: ['admin', 'manager', 'production', 'rm_store', 'production_head'] },
@@ -296,12 +298,6 @@ function App() {
     invoice_number: '',
     invoice_date: '',
     hsn_code: '',
-  })
-  const [targetForm, setTargetForm] = useState<Record<string, string>>({
-    product_id: '',
-    target_qty: '',
-    start_date: '',
-    end_date: '',
   })
   const [planForm, setPlanForm] = useState<Record<string, string>>({
     target_id: '',
@@ -634,8 +630,6 @@ function App() {
         {activeTab === 'production' && (
           <Production
             onPrintRequest={(req) => { setPrintingRequest(req); setTimeout(() => { window.print(); setTimeout(() => setPrintingRequest(null), 100) }, 100) }}
-            targetForm={targetForm}
-            setTargetForm={setTargetForm}
             planForm={planForm}
             setPlanForm={setPlanForm}
             requestForm={productionForm}
@@ -725,7 +719,15 @@ function App() {
             />
           </div>
         )}
-        {activeTab === 'master' && (
+        
+      {activeTab === 'production_target' && (
+        <ProductionTargetTab
+          workflow={workflow}
+          bootstrap={bootstrap}
+          submitAction={submitAction}
+        />
+      )}
+      {activeTab === 'master' && (
           <MasterData
             bootstrap={bootstrap}
             submitAction={submitAction}
@@ -2090,8 +2092,6 @@ function ProductionRunTab({
 
 function Production({
   onPrintRequest,
-  targetForm,
-  setTargetForm,
   planForm,
   setPlanForm,
   requestForm,
@@ -2104,8 +2104,6 @@ function Production({
   userRole,
 }: {
   onPrintRequest: (request: ProductionRequest) => void
-  targetForm: Record<string, string>
-  setTargetForm: (value: Record<string, string>) => void
   planForm: Record<string, string>
   setPlanForm: (value: Record<string, string>) => void
   requestForm: Record<string, string>
@@ -2199,108 +2197,9 @@ function Production({
       </section>
       )}
 
-      {['admin', 'production'].includes(userRole) && (
+      {true && (
         <section className="panel">
           <PanelTitle icon={Activity} title="Production Target" />
-          <form
-            className="form-grid"
-            onSubmit={async (event) => {
-              event.preventDefault()
-              const result = await Swal.fire({
-                title: 'Set Target',
-                text: 'Are you sure you want to set this production target?',
-                icon: 'question',
-                showCancelButton: true,
-                confirmButtonText: 'Yes, set it',
-                cancelButtonText: 'Cancel'
-              })
-              if (result.isConfirmed) {
-                const success = await submitAction(postJson('/api/production-targets', targetForm), 'Production target created')
-                if (success) {
-                  setTargetForm({
-                    product_id: '',
-                    target_qty: '',
-                    start_date: '',
-                    end_date: '',
-                  })
-                }
-              }
-            }}
-          >
-            <label>
-              Product
-              <select
-                value={targetForm.product_id}
-                onChange={(event) => {
-                  const val = event.target.value
-                  setTargetForm({ ...targetForm, product_id: val })
-                  if (val) {
-                    const productId = Number(val)
-                    const requiredBomItems = bootstrap.bomItems.filter(b => b.product_id === productId)
-                    const missingMaterials = requiredBomItems.filter(bom => {
-                      return !workflow.daystoreInventory.some(inv => inv.material_id === bom.raw_material_id)
-                    })
-                    
-                    if (missingMaterials.length > 0) {
-                      const missingNames = missingMaterials.map(bom => {
-                        const mat = bootstrap.rawMaterials.find(m => m.id === bom.raw_material_id)
-                        return mat ? mat.name : 'Unknown Material'
-                      }).join(', ')
-                      
-                      Swal.fire({
-                        title: 'Material Not in Daystore!',
-                        text: `${missingNames} is not in Current Daystore Inventory.`,
-                        icon: 'warning'
-                      })
-                    }
-                  }
-                }}
-                required
-              >
-                <option value="">Select</option>
-                {bootstrap.products.map((product) => (
-                  <option key={product.id} value={product.id}>
-                    {product.code} - {product.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              Target Qty
-              <input
-                min="1"
-                step="1"
-                type="number"
-                value={targetForm.target_qty}
-                onChange={(event) => setTargetForm({ ...targetForm, target_qty: event.target.value })}
-                required
-              />
-            </label>
-            <label>
-              Start Date
-              <input
-                type="date"
-                value={targetForm.start_date}
-                onChange={(event) => setTargetForm({ ...targetForm, start_date: event.target.value })}
-              />
-            </label>
-            <label>
-              End Date
-              <input
-                type="date"
-                value={targetForm.end_date}
-                onChange={(event) => setTargetForm({ ...targetForm, end_date: event.target.value })}
-              />
-            </label>
-            <label>
-              Remarks
-              <input value={targetForm.remarks || ''} onChange={(event) => setTargetForm({ ...targetForm, remarks: event.target.value })} />
-            </label>
-            <button className="primary-button span-two" type="submit">
-              <Plus size={18} />
-              Set Target
-            </button>
-          </form>
           <div className="queue-list" style={{ marginTop: '1rem', maxHeight: '400px', overflowY: 'auto', paddingRight: '8px' }}>
             {workflow.productionTargets.map((target) => {
               const planned = getPlannedForTarget(target.id)
@@ -2897,9 +2796,13 @@ function FgAndDispatch({
             Customer Email
             <input type="email" multiple placeholder="email1@gmail.com, email2@gmail.com" value={form.customer_email || ''} onChange={(event) => setForm({ ...form, customer_email: event.target.value })} />
           </label>
-          <label className="span-two">
+          <label>
             P.O Number
             <input value={form.order_ref || ''} onChange={(event) => setForm({ ...form, order_ref: event.target.value })} required />
+          </label>
+          <label>
+            Invoice No.
+            <input value={form.invoice_number || ''} onChange={(event) => setForm({ ...form, invoice_number: event.target.value })} />
           </label>
           <label>
             Dispatch Date
@@ -4320,30 +4223,41 @@ function PublicTraceability({ batchCode }: { batchCode: string }) {
 
           <section className="panel" style={{ boxShadow: '0 4px 12px rgba(0,0,0,0.05)', border: '1px solid var(--border)' }}>
             <PanelTitle icon={ClipboardCheck} title="Quality Control Results" />
-            <div style={{ overflowX: 'auto' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.9em' }}>
-                <thead>
+            {trace.fgQc.length === 0 ? (
+              <p style={{ color: '#64748b', margin: '16px 0', padding: '0 1rem' }}>No QC results found.</p>
+            ) : (
+              Array.from(new Set(trace.fgQc.map((r: any) => r.batch_code))).map(bCode => (
+                <div key={String(bCode)} style={{ overflowX: 'auto', marginBottom: '24px', padding: '0 1rem' }}>
+                  <h4 style={{ margin: '0 0 12px 0', color: '#0f172a', borderBottom: '1px solid #e2e8f0', paddingBottom: '8px' }}>
+                    Batch: {String(bCode)}
+                  </h4>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.9em' }}>
+                  <thead>
                   <tr style={{ borderBottom: '2px solid var(--border)', textAlign: 'left' }}>
-                    <th style={{ padding: '0.75rem' }}>Stage</th>
-                    <th style={{ padding: '0.75rem' }}>Parameter</th>
-                    <th style={{ padding: '0.75rem' }}>Value</th>
-                    <th style={{ padding: '0.75rem' }}>Result</th>
+                  <th style={{ padding: '0.75rem' }}>Stage</th>
+                  <th style={{ padding: '0.75rem' }}>Parameter</th>
+                  <th style={{ padding: '0.75rem' }}>Value</th>
+                  <th style={{ padding: '0.75rem' }}>Result</th>
+                  <th style={{ padding: '0.75rem' }}>Checked By</th>
                   </tr>
-                </thead>
-                <tbody>
-                  {trace.fgQc.map((row, index) => (
-                    <tr key={index} style={{ borderBottom: '1px solid var(--border)' }}>
-                      <td style={{ padding: '0.75rem' }}>{row.stage || 'QC'}</td>
-                      <td style={{ padding: '0.75rem' }}>{row.label || 'Manual check'}</td>
-                      <td style={{ padding: '0.75rem' }}>{row.value || '-'}</td>
-                      <td style={{ padding: '0.75rem', color: Number(row.passed) ? 'var(--success)' : 'var(--danger)', fontWeight: 'bold' }}>
-                        {Number(row.passed) ? 'Pass' : 'Fail'}
-                      </td>
-                    </tr>
+                  </thead>
+                  <tbody>
+                  {trace.fgQc.filter((r: any) => r.batch_code === bCode).map((row: any, index: number) => (
+                  <tr key={index} style={{ borderBottom: '1px solid var(--border)' }}>
+                  <td style={{ padding: '0.75rem' }}>{row.stage || 'QC'}</td>
+                  <td style={{ padding: '0.75rem' }}>{row.label || 'Manual check'}</td>
+                  <td style={{ padding: '0.75rem' }}>{row.value || '-'}</td>
+                  <td style={{ padding: '0.75rem', color: Number(row.passed) ? 'var(--success)' : 'var(--danger)', fontWeight: 'bold' }}>
+                  {Number(row.passed) ? 'Pass' : 'Fail'}
+                  </td>
+                  <td style={{ padding: '0.75rem' }}>{row.checked_by_name || '-'}</td>
+                  </tr>
                   ))}
-                </tbody>
-              </table>
-            </div>
+                  </tbody>
+                  </table>
+                </div>
+              ))
+            )}
           </section>
         </div>
       )}
@@ -4624,22 +4538,46 @@ function PrintLogSheet({ batch }: { batch: any }) {
 function PrintCoverSlip({ batch }: { batch: any }) {
   return (
     <div className="print-container">
-      <div className="print-sticker-slip" style={{ padding: '24px', fontFamily: 'sans-serif', width: '400px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
-        <div style={{ textAlign: 'center', fontSize: '32px', fontWeight: 'bold', letterSpacing: '2px', alignSelf: 'center', marginBottom: '8px' }}>
-          {batch.product_code}
+      <div className="print-sticker-slip" style={{ padding: '24px', fontFamily: 'sans-serif', width: '550px', display: 'flex', justifyContent: 'space-between', gap: '24px' }}>
+        
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', flex: 1 }}>
+          <div style={{ textAlign: 'center', fontSize: '32px', fontWeight: 'bold', letterSpacing: '2px', alignSelf: 'center', marginBottom: '8px' }}>
+            {batch.product_code}
+          </div>
+          <div style={{ fontSize: '20px', display: 'flex', gap: '8px' }}>
+            <span>BATCH NO:</span> <span>{batch.batch_code}</span>
+          </div>
+          <div style={{ fontSize: '20px', textTransform: 'uppercase', display: 'flex', gap: '8px' }}>
+            <span>PRODUCT-</span> <span>{batch.product_name}</span>
+          </div>
+          <div style={{ fontSize: '20px' }}>
+            CASE NO - 1/1
+          </div>
+          <div style={{ fontSize: '20px' }}>
+            QTY-{batch.quantity} {batch.unit_code || 'PCS'}
+          </div>
         </div>
-        <div style={{ fontSize: '20px', display: 'flex', gap: '8px' }}>
-          <span>BATCH NO:</span> <span>{batch.batch_code}</span>
+
+        <div style={{ width: '160px', border: '2px solid #333', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
+          <div style={{ 
+            width: '90px', 
+            height: '90px', 
+            borderRadius: '50%', 
+            border: '4px solid #16a34a', 
+            color: '#16a34a', 
+            display: 'flex', 
+            alignItems: 'center', 
+            justifyContent: 'center', 
+            fontSize: '40px', 
+            fontWeight: '900',
+            fontFamily: 'Arial, sans-serif',
+            transform: 'rotate(-10deg)',
+            boxShadow: 'inset 0 0 4px rgba(22, 163, 74, 0.3)'
+          }}>
+            QC
+          </div>
         </div>
-        <div style={{ fontSize: '20px', textTransform: 'uppercase', display: 'flex', gap: '8px' }}>
-          <span>PRODUCT-</span> <span>{batch.product_name}</span>
-        </div>
-        <div style={{ fontSize: '20px' }}>
-          CASE NO - 1/1
-        </div>
-        <div style={{ fontSize: '20px' }}>
-          QTY-{batch.quantity} {batch.unit_code || 'PCS'}
-        </div>
+
       </div>
     </div>
   )
@@ -4653,7 +4591,7 @@ function PrintCartonSlip({ dispatch }: { dispatch: any }) {
           {dispatch.product_code}
         </div>
         <div style={{ textAlign: 'center', fontSize: '20px', display: 'flex', justifyContent: 'center', gap: '8px', marginBottom: '24px' }}>
-          <span>BATCH NO:</span> <span>{dispatch.batch_code}</span>
+          <span>BATCH NO:</span> <span>{dispatch.batch_code}{dispatch.all_batch_codes ? ` (${dispatch.all_batch_codes})` : ''}</span>
         </div>
         <div style={{ fontSize: '24px', textTransform: 'uppercase', display: 'flex', gap: '8px', marginBottom: '16px' }}>
           <span>TOTAL QTY-</span> <span>{dispatch.quantity} {dispatch.unit_code || 'PCS'}</span>
@@ -4665,7 +4603,7 @@ function PrintCartonSlip({ dispatch }: { dispatch: any }) {
           <span>P.O NO:</span> <span>{dispatch.order_ref}</span>
         </div>
         <div style={{ fontSize: '20px', display: 'flex', gap: '8px' }}>
-          <span>INVOICE NO :</span> <span>-</span>
+          <span>INVOICE NO :</span> <span>{dispatch.invoice_number || '-'}</span>
         </div>
       </div>
     </div>
@@ -4698,3 +4636,147 @@ function PrintAddressSlip({ dispatch, customers }: { dispatch: any, customers: C
 }
 
 export default App
+
+
+function ProductionTargetTab({ workflow, bootstrap, submitAction }: { workflow: WorkflowData, bootstrap: BootstrapData, submitAction: <T>(action: Promise<T>, message: string) => Promise<boolean> }) {
+  const [form, setForm] = useState<{product_id: string, target_qty: string, start_date: string, end_date: string, remarks: string}>({
+    product_id: '', target_qty: '', start_date: '', end_date: '', remarks: ''
+  })
+  const [editingId, setEditingId] = useState<number | null>(null)
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!form.product_id || !form.target_qty) {
+      Swal.fire('Error', 'Product and Target Qty are required', 'error')
+      return
+    }
+    const payload = {
+      product_id: Number(form.product_id),
+      target_qty: Number(form.target_qty),
+      start_date: form.start_date || null,
+      end_date: form.end_date || null,
+      remarks: form.remarks || null
+    }
+
+    if (editingId) {
+      const success = await submitAction(putJson(`/api/production-targets/${editingId}`, payload), 'Production target updated')
+      if (success) {
+        setForm({ product_id: '', target_qty: '', start_date: '', end_date: '', remarks: '' })
+        setEditingId(null)
+      }
+    } else {
+      const success = await submitAction(postJson('/api/production-targets', payload), 'Production target created')
+      if (success) {
+        setForm({ product_id: '', target_qty: '', start_date: '', end_date: '', remarks: '' })
+      }
+    }
+  }
+
+  const handleDelete = (id: number) => {
+    Swal.fire({
+      title: 'Are you sure?',
+      text: "You won't be able to revert this!",
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonColor: '#d33',
+      cancelButtonColor: '#3085d6',
+      confirmButtonText: 'Yes, delete it!'
+    }).then(async (result) => {
+      if (result.isConfirmed) {
+        await submitAction(api(`/api/production-targets/${id}`, { method: 'DELETE' }), 'Production target deleted')
+      }
+    })
+  }
+
+  return (
+    <div className="dashboard-grid" style={{ gridTemplateColumns: '350px 1fr' }}>
+      <section className="panel" style={{ alignSelf: 'start' }}>
+        <PanelTitle icon={Target} title={editingId ? "Edit Target" : "New Target"} />
+        <form onSubmit={handleSubmit} className="stack">
+          <label>
+            Product *
+            <select value={form.product_id} onChange={(e) => setForm({ ...form, product_id: e.target.value })} required>
+              <option value="">Select Product...</option>
+              {bootstrap.products.map(p => (
+                <option key={p.id} value={p.id}>{p.code} - {p.name}</option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Target Quantity *
+            <input type="number" step="1" min="1" value={form.target_qty} onChange={(e) => setForm({ ...form, target_qty: e.target.value })} required />
+          </label>
+          <label>
+            Start Date
+            <input type="date" value={form.start_date} onChange={(e) => setForm({ ...form, start_date: e.target.value })} />
+          </label>
+          <label>
+            End Date
+            <input type="date" value={form.end_date} onChange={(e) => setForm({ ...form, end_date: e.target.value })} />
+          </label>
+          <label>
+            Remarks
+            <textarea value={form.remarks} onChange={(e) => setForm({ ...form, remarks: e.target.value })} rows={3} style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid var(--border)' }} />
+          </label>
+          <div style={{ display: 'flex', gap: '8px', marginTop: '12px' }}>
+            <button type="submit" className="button primary" style={{ flex: 1 }}>
+              <CheckCircle2 size={16} style={{ marginRight: '8px' }} /> {editingId ? 'Update' : 'Save'} Target
+            </button>
+            {editingId && (
+              <button type="button" className="button" onClick={() => { setEditingId(null); setForm({ product_id: '', target_qty: '', start_date: '', end_date: '', remarks: '' }) }}>
+                Cancel
+              </button>
+            )}
+          </div>
+        </form>
+      </section>
+
+      <section className="panel">
+        <PanelTitle icon={Target} title="Production Targets" />
+        <div style={{ overflowX: 'auto' }}>
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Product</th>
+                <th>Target Qty</th>
+                <th>Start Date</th>
+                <th>End Date</th>
+                <th>Status</th>
+                <th>Remarks</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {workflow.productionTargets.map(t => (
+                <tr key={t.id}>
+                  <td>{t.product_code} - {t.product_name}</td>
+                  <td>{t.target_qty} {t.unit_code}</td>
+                  <td>{t.start_date || '-'}</td>
+                  <td>{t.end_date || '-'}</td>
+                  <td><StatusBadge status={t.status} /></td>
+                  <td>{t.remarks || '-'}</td>
+                  <td style={{ display: 'flex', gap: '8px' }}>
+                    <button type="button" className="text-button" onClick={() => {
+                      setEditingId(t.id);
+                      setForm({
+                        product_id: String(t.product_id),
+                        target_qty: String(t.target_qty),
+                        start_date: t.start_date || '',
+                        end_date: t.end_date || '',
+                        remarks: t.remarks || ''
+                      })
+                    }}>Edit</button>
+                    <button type="button" className="text-button" style={{ color: 'var(--danger)' }} onClick={() => handleDelete(t.id)}>Delete</button>
+                  </td>
+                </tr>
+              ))}
+              {workflow.productionTargets.length === 0 && (
+                <tr><td colSpan={7} style={{ textAlign: 'center', color: 'var(--text-muted)' }}>No production targets found</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+  )
+}

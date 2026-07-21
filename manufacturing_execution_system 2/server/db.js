@@ -527,7 +527,7 @@ function ensureDaystoreTables(db) {
 
 function seedDatabase(db) {
   const roleRows = [
-    ['admin', 'Admin', JSON.stringify(['dashboard', 'rm', 'production', 'qc_dashboard', 'qa_dashboard', 'qc', 'fg', 'traceability', 'users', 'master'])],
+    ['admin', 'Admin', JSON.stringify(['dashboard', 'production_target', 'rm', 'production', 'qc_dashboard', 'qa_dashboard', 'qc', 'fg', 'traceability', 'users', 'master'])],
     ['manager', 'Manager', JSON.stringify(['dashboard', 'rm', 'production', 'qc_dashboard', 'qa_dashboard', 'qc', 'fg', 'traceability', 'master'])],
     ['rm_store', 'RM Store Manager', JSON.stringify(['dashboard', 'rm', 'production', 'traceability'])],
     ['production', 'Production Team', JSON.stringify(['dashboard', 'production', 'qc', 'traceability'])],

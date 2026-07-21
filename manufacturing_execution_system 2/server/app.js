@@ -147,9 +147,32 @@ export function createApp(db = initDatabase()) {
     res.status(201).json(transfer)
   })
 
-  app.post('/api/production-targets', requireUser(db), requireRoles('admin', 'manager', 'production', 'production_head'), (req, res) => {
+  app.post('/api/production-targets', requireUser(db), requireRoles('admin'), (req, res) => {
     const target = createProductionTarget(db, req.body ?? {}, req.user.id)
     res.status(201).json(target)
+  })
+
+  app.put('/api/production-targets/:id', requireUser(db), requireRoles('admin'), (req, res) => {
+    const targetId = Number(req.params.id)
+    const productId = Number(req.body.product_id)
+    const targetQty = Number(req.body.target_qty)
+    if (!productId || !targetQty) return res.status(400).json({ error: 'Product and target quantity required' })
+    const status = req.body.status || 'ACTIVE'
+    db.prepare(`
+      UPDATE production_targets 
+      SET product_id = ?, target_qty = ?, start_date = ?, end_date = ?, remarks = ?, status = ?
+      WHERE id = ?
+    `).run(productId, targetQty, req.body.start_date || null, req.body.end_date || null, req.body.remarks || null, status, targetId)
+    const updated = db.prepare('SELECT * FROM production_targets WHERE id = ?').get(targetId)
+    if (!updated) return res.status(404).json({ error: 'Not found' })
+    res.json(updated)
+  })
+
+  app.delete('/api/production-targets/:id', requireUser(db), requireRoles('admin'), (req, res) => {
+    const targetId = Number(req.params.id)
+    const result = db.prepare('DELETE FROM production_targets WHERE id = ?').run(targetId)
+    if (result.changes === 0) return res.status(404).json({ error: 'Not found' })
+    res.status(204).end()
   })
 
   app.post('/api/production-plans', requireUser(db), requireRoles('admin', 'manager', 'production', 'production_head'), (req, res) => {
