@@ -297,6 +297,10 @@ export function createApp(db = initDatabase()) {
                      FROM rm_issue_allocations ria
                      LEFT JOIN production_consumption pc ON pc.allocation_id = ria.id
                      WHERE ria.receipt_id = rr.id
+                   ), 0) - COALESCE((
+                     SELECT SUM(quantity)
+                     FROM daystore_inventory
+                     WHERE receipt_id = rr.id
                    ), 0)) AS available_qty
             FROM rm_receipts rr
             JOIN raw_materials rm ON rm.id = rr.material_id
@@ -1708,7 +1712,14 @@ function getDaystoreInventory(db) {
       rr.lot_number,
       rr.supplier,
       SUM(di.quantity) as total_transferred,
-      SUM(di.quantity) - IFNULL((SELECT SUM(actual_qty) FROM production_consumption WHERE receipt_id = di.receipt_id), 0) as available_qty
+      SUM(di.quantity) - COALESCE(
+        (SELECT SUM(pc.actual_qty)
+         FROM production_consumption pc
+         JOIN rm_issue_allocations ria ON ria.id = pc.allocation_id
+         JOIN rm_issues ri ON ri.id = ria.issue_id
+         JOIN production_requests pr ON pr.id = ri.request_id
+         WHERE pr.source_team = 'daystore' AND pc.receipt_id = di.receipt_id),
+      0) as available_qty
     FROM daystore_inventory di
     JOIN raw_materials rm ON rm.id = di.material_id
     JOIN units u ON u.id = rm.unit_id

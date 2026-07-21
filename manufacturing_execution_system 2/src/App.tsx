@@ -1948,7 +1948,7 @@ function ProductionRunTab({
             <legend style={{ padding: '0 0.5rem', fontWeight: 'bold' }}>Produced Quantity Breakdown</legend>
             <div className="form-grid">
               <label>
-                Good Pieces Produced
+                Total Production
                 <input
                   min="1"
                   step="1"
@@ -2146,7 +2146,7 @@ function Production({
       {rejectedRequests.length > 0 && (
         <section className="panel span-two" style={{ border: '1px solid var(--danger)', backgroundColor: 'rgba(239, 68, 68, 0.05)' }}>
           <PanelTitle icon={XCircle} title="Rejected Material Requests" />
-          <div className="queue-list" style={{ marginTop: '1rem' }}>
+          <div className="queue-list" style={{ marginTop: '1rem', maxHeight: '400px', overflowY: 'auto', paddingRight: '8px' }}>
             {rejectedRequests.map((request) => (
               <article className="queue-item" key={request.id} style={{ borderColor: 'var(--danger)' }}>
                 <div className="queue-heading">
@@ -2301,7 +2301,7 @@ function Production({
               Set Target
             </button>
           </form>
-          <div className="queue-list" style={{ marginTop: '1rem' }}>
+          <div className="queue-list" style={{ marginTop: '1rem', maxHeight: '400px', overflowY: 'auto', paddingRight: '8px' }}>
             {workflow.productionTargets.map((target) => {
               const planned = getPlannedForTarget(target.id)
               const actual = getActualForTarget(target.id)
@@ -2435,9 +2435,9 @@ function Production({
             Create Plan
           </button>
         </form>
-        <div className="queue-list" style={{ marginTop: '1rem' }}>
-          {workflow.productionPlans.length === 0 && <div className="empty">No active plans</div>}
-          {workflow.productionPlans.map((plan) => (
+        <div className="queue-list" style={{ marginTop: '1rem', maxHeight: '400px', overflowY: 'auto', paddingRight: '8px' }}>
+          {workflow.productionPlans.filter(plan => !workflow.productionRequests.some(req => req.plan_id === plan.id && ['RM_APPROVED', 'PRODUCED'].includes(req.status))).length === 0 && <div className="empty">No active plans</div>}
+{workflow.productionPlans.filter(plan => !workflow.productionRequests.some(req => req.plan_id === plan.id && ['RM_APPROVED', 'PRODUCED'].includes(req.status))).map((plan) => (
             <article className="queue-item" key={plan.id}>
               <div className="queue-heading">
                 <strong>{plan.product_code} / {fmtQty(plan.planned_qty)} {plan.unit_code}</strong>
@@ -3098,28 +3098,39 @@ function Traceability({
           </section>
           <section className="panel">
             <PanelTitle icon={ClipboardCheck} title="FG QC Results" />
-            <table>
-              <thead>
-                <tr>
-                  <th>Stage</th>
-                  <th>Parameter</th>
-                  <th>Value</th>
-                  <th>Result</th>
-                  <th>Checked By</th>
-                </tr>
-              </thead>
-              <tbody>
-                {trace.fgQc.map((row, index) => (
-                  <tr key={`${row.parameter_id}-${index}`}>
-                    <td>{row.stage || 'QC'}</td>
-                    <td>{row.label || 'Manual check'}</td>
-                    <td>{row.value || '-'}</td>
-                    <td>{Number(row.passed) ? 'Pass' : 'Fail'}</td>
-                    <td>{row.checked_by_name || '-'}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            {trace.fgQc.length === 0 ? (
+              <p style={{ color: '#64748b', margin: '16px 0' }}>No QC results found.</p>
+            ) : (
+              Array.from(new Set(trace.fgQc.map((r: any) => r.batch_code))).map(bCode => (
+                <div key={String(bCode)} style={{ marginBottom: '24px' }}>
+                  <h4 style={{ margin: '0 0 12px 0', color: '#0f172a', borderBottom: '1px solid #e2e8f0', paddingBottom: '8px' }}>
+                    Batch: {bCode}
+                  </h4>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Stage</th>
+                        <th>Parameter</th>
+                        <th>Value</th>
+                        <th>Result</th>
+                        <th>Checked By</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {trace.fgQc.filter((r: any) => r.batch_code === bCode).map((row: any, index: number) => (
+                        <tr key={`${row.parameter_id}-${index}`}>
+                          <td>{row.stage || 'QC'}</td>
+                          <td>{row.label || 'Manual check'}</td>
+                          <td>{row.value || '-'}</td>
+                          <td>{Number(row.passed) ? 'Pass' : 'Fail'}</td>
+                          <td>{row.checked_by_name || '-'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ))
+            )}
           </section>
           <section className="panel">
             <PanelTitle icon={Truck} title="Dispatch History" />
